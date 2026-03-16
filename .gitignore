@@ -1,0 +1,9 @@
+node_modules
+.next
+.env.local
+.env
+backups
+.DS_Store
+
+data/chat-store/*
+!data/chat-store/.gitkeep
