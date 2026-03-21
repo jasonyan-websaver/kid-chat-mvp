@@ -1,6 +1,6 @@
 # Kid Chat MVP
 
-**Version:** v0.1.0  
+**Version:** v0.2.0  
 **License:** MIT
 
 Kid Chat MVP is an open-source, family-oriented chat app designed for children and parents.
@@ -19,10 +19,12 @@ Installation note:
 
 - Separate child entry points with PIN protection
 - Independent chat history per child
-- Parent admin for profiles, memory, and runtime checks
+- Parent admin for profiles, memory, runtime checks, image storage visibility, and cache cleanup
 - Parent-only chat history review with search, highlighting, and time filters
 - Raw JSON + structured form profile editing
 - Mock mode and real OpenClaw mode
+- Multimodal groundwork for image understanding / generation / edit flows
+- Upload safety guardrails for image type, size, dimensions, pixel count, and per-kid upload throttling
 - PM2, backup/recovery, and reverse proxy docs included
 
 ## Project Notes
@@ -30,6 +32,7 @@ Installation note:
 - `data/chat-store/` is intentionally ignored so real chat transcripts are not published
 - See also:
   - `CHANGELOG.md`
+  - `RELEASE-NOTES-v0.2.0.md`
   - `RELEASE-NOTES-v0.1.0.md`
   - `OSS-SANITIZATION-CHECKLIST.md`
 
@@ -62,7 +65,11 @@ Installation note:
 - Read each child's saved chat history in a parent-only admin view
 - Edit each child's `profile.json` in raw JSON or optional structured form mode, both backed by the same normalized schema; raw JSON can optionally preserve advanced extra fields
 - Edit each child's agent `MEMORY.md`
-- Runtime self-check panel for env, profile, workspace, memory path visibility, and per-agent connectivity testing
+- Runtime self-check panel for env, profile, workspace, memory path visibility, image backend visibility, and per-agent connectivity testing
+- Child-specific controls for TTS, image understanding, image generation, and image edit readiness
+- Child-facing capability preview so parents can see which buttons / modes the child will actually see
+- Local image storage visibility with per-child cache cleanup controls
+- Recent smoke-test result visibility for image backends
 - Save changes directly in the browser
 - Light mode / dark mode
 
@@ -73,6 +80,16 @@ Installation note:
 - Local chat persistence per child
 - Profile injection into prompts
 - Automatic long-term memory extraction with throttling
+- Uploaded image understanding in real mode
+- Image-generation backend selection groundwork
+- Browser TTS playback and per-child voice preferences
+- Image upload guardrails:
+  - accepted types: PNG / JPG / WEBP / GIF
+  - per-file size limit: 8MB
+  - maximum dimensions: 4096 × 4096
+  - maximum total pixels: 12MP
+  - per-kid upload throttling between image uploads
+- Local generated / uploaded image cache under `public/chat-media/`
 
 ---
 
@@ -95,6 +112,8 @@ Installation note:
 - `POST /api/memory` — save agent memory
 - `GET /api/profile?kidId=...` — read profile JSON
 - `POST /api/profile` — save profile JSON
+- `GET /api/media-storage` — read local image-cache usage summary
+- `POST /api/media-storage` — clear one child's local image cache
 - `POST /api/verify-pin` — verify child PIN
 - `POST /api/verify-admin-pin` — verify parent PIN
 - `POST /api/clear-pin` — clear child PIN cookies
@@ -163,6 +182,7 @@ npm run start:prod
 npm run backup
 npm run restore -- ./backups/kid-chat-mvp-YYYYMMDD-HHMMSS
 npm run lint
+npm run typecheck
 ```
 
 ---
@@ -202,6 +222,54 @@ process.env.OPENCLAW_USE_MOCK === 'true'
 ```
 
 So only the literal string `true` enables mock mode.
+
+#### `KID_CHAT_IMAGE_PROVIDER`
+Controls which image-generation backend Kid Chat uses.
+
+Supported values:
+
+- `media-agent` → ask a dedicated media agent to choose and run the image workflow
+- `gemini-direct` → call Gemini image generation directly via API
+- `inference-sh` → use `infsh` / inference.sh backend
+
+Default:
+
+- `media-agent`
+
+#### `KID_CHAT_MEDIA_AGENT_ID`
+Which agent handles image generation when `KID_CHAT_IMAGE_PROVIDER=media-agent`.
+
+Default:
+
+- `media`
+
+#### `KID_CHAT_IMAGE_MODEL`
+Optional Gemini image model override for `gemini-direct`.
+
+Default:
+
+- `gemini-2.0-flash-preview-image-generation`
+
+#### `KID_CHAT_GEMINI_API_KEY`
+API key for Gemini direct image generation.
+
+Fallback lookup order:
+
+- `KID_CHAT_GEMINI_API_KEY`
+- `GEMINI_API_KEY`
+- `GOOGLE_API_KEY`
+
+### Image upload policy
+
+Current product guardrails:
+
+- accepted formats: PNG, JPG, WEBP, GIF
+- per-file size limit: 8MB
+- maximum dimensions: 4096 × 4096
+- maximum total pixels: 12MP
+- image uploads are throttled per child to reduce accidental rapid-fire submissions
+
+These checks are enforced in both the child-facing upload flow and the server-side upload handling.
 
 ---
 
@@ -983,13 +1051,13 @@ Note: `components/memory-admin.tsx` is an older admin component retained in the 
 This is still an MVP. Current limitations include:
 
 - only two built-in children
-- child mapping is hard-coded
+- child mapping is hard-coded in several places
 - child definitions are still not fully dynamic everywhere
+- no voice input yet
 - no moderation / safety filtering layer yet
-- no voice input or TTS
-- no attachment or image flow
 - no multi-family account model
 - no admin diff / version rollback
+- image editing remains an early / limited workflow compared with the text chat path
 
 ---
 
@@ -1000,10 +1068,10 @@ Useful next improvements:
 - add child management in admin
 - move child mapping to config instead of code
 - add safety filtering
-- add TTS / voice input
+- add voice input
 - add quick prompt buttons
-- add parent chat history viewer
-- add schema-driven profile editor
+- improve image-edit UX beyond the current groundwork-oriented flow
+- add schema-driven profile editor improvements
 - add memory diff / history
 - add PIN/session expiry controls
 

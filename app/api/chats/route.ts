@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { jsonError } from '@/lib/api-errors';
 import { createChatForKid } from '@/lib/openclaw';
+import { getChildAuthErrorResponse, requireChildRequest } from '@/lib/route-guards';
 
 export async function POST(request: NextRequest) {
   try {
@@ -9,12 +11,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'kidId is required' }, { status: 400 });
     }
 
-    const result = await createChatForKid(body.kidId);
+    const authError = getChildAuthErrorResponse(request, body.kidId);
+    if (authError) return authError;
+
+    const kidId = requireChildRequest(request, body.kidId);
+    const result = await createChatForKid(kidId);
     return NextResponse.json(result);
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Unknown error' },
-      { status: 500 },
-    );
+    return jsonError(error);
   }
 }

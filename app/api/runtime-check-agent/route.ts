@@ -2,17 +2,18 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { NextRequest, NextResponse } from 'next/server';
 import { getConfiguredKidById } from '@/lib/kid-settings';
+import { getAdminAuthErrorResponse, requireAdminRequest, requireKnownKidId } from '@/lib/route-guards';
 
 const execFileAsync = promisify(execFile);
 
 export async function POST(request: NextRequest) {
-  try {
-    const body = (await request.json()) as { kidId?: string };
-    const kidId = String(body.kidId || '').trim().toLowerCase();
+  const authError = getAdminAuthErrorResponse(request);
+  if (authError) return authError;
 
-    if (!kidId) {
-      return NextResponse.json({ error: 'kidId is required' }, { status: 400 });
-    }
+  try {
+    requireAdminRequest(request);
+    const body = (await request.json()) as { kidId?: string };
+    const kidId = requireKnownKidId(String(body.kidId || ''));
 
     if (process.env.OPENCLAW_USE_MOCK === 'true') {
       return NextResponse.json({

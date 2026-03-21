@@ -5,5 +5,10 @@ node_modules
 backups
 .DS_Store
 
+tsconfig.tsbuildinfo
+public/chat-media/
+data/memory-throttle/*.json
+data/smoke-tests/*.json
+
 data/chat-store/*
 !data/chat-store/.gitkeep

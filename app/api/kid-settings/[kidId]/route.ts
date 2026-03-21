@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getConfiguredKidById } from '@/lib/kid-settings';
+import { requireKnownKidId } from '@/lib/route-guards';
 
 export async function GET(
   _request: NextRequest,
@@ -7,7 +8,7 @@ export async function GET(
 ) {
   try {
     const { kidId } = await params;
-    const kid = await getConfiguredKidById(kidId);
+    const kid = await getConfiguredKidById(requireKnownKidId(kidId));
 
     if (!kid) {
       return NextResponse.json({ error: 'Unknown kid' }, { status: 404 });
