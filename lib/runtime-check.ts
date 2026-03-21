@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs';
 import { getConfiguredKids } from './kid-settings';
 import { getKidMemoryPath, getKidProfilePath, getKidWorkspaceDir } from './kid-paths';
+import { getImageGenerationRuntimeCheck, type ImageGenerationRuntimeCheck } from './runtime-check-image';
 
 export type KidRuntimeCheck = {
   kidId: string;
@@ -20,6 +21,7 @@ export type RuntimeCheckResult = {
   openclawUseMock: string;
   pm2Name: string;
   kids: KidRuntimeCheck[];
+  imageGeneration: ImageGenerationRuntimeCheck;
   issues: string[];
 };
 
@@ -39,6 +41,7 @@ export async function getRuntimeCheckResult(): Promise<RuntimeCheckResult> {
   const mode = openclawUseMock === 'true' ? 'mock' : 'real';
   const pm2Name = process.env.KID_CHAT_PM2_NAME?.trim() || 'kid-chat-mvp';
   const issues: string[] = [];
+  const imageGeneration = await getImageGenerationRuntimeCheck();
 
   const kids = await Promise.all(
     configuredKids.map(async (kid) => {
@@ -94,11 +97,14 @@ export async function getRuntimeCheckResult(): Promise<RuntimeCheckResult> {
     issues.push(...kids.flatMap((kid) => kid.issues.map((issue) => `${kid.kidName}: ${issue}`)));
   }
 
+  issues.push(...imageGeneration.issues.map((issue) => `图片生成: ${issue}`));
+
   return {
     mode,
     openclawUseMock,
     pm2Name,
     kids,
+    imageGeneration,
     issues,
   };
 }

@@ -9,6 +9,11 @@ export const kids: KidProfile[] = [
     accentColor: '#ec4899',
     emoji: '🌸',
     welcome: '你好，Grace！我可以陪你聊天、讲故事，也可以用中文或法语和你交流。',
+    capabilities: {
+      imageGeneration: true,
+      imageUnderstanding: true,
+      imageEdit: false,
+    },
   },
   {
     id: 'george',
@@ -18,6 +23,11 @@ export const kids: KidProfile[] = [
     accentColor: '#3b82f6',
     emoji: '🚀',
     welcome: '你好，George！我们可以一起聊科学、提问题，也可以用中文或法语交流。',
+    capabilities: {
+      imageGeneration: true,
+      imageUnderstanding: true,
+      imageEdit: false,
+    },
   },
 ];
 

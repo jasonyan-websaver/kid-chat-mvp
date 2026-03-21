@@ -2,9 +2,10 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { ThemeToggle } from '@/components/theme-toggle';
+import { formatBytesToMb, getAcceptedImageTypeLabel } from '@/lib/image-upload-policy';
 import { getUnknownProfileKeysFromJson } from '@/lib/profile-schema';
 
-type TabKey = 'memory' | 'profile' | 'env' | 'text' | 'history';
+type TabKey = 'memory' | 'profile' | 'env' | 'text' | 'history' | 'tts';
 
 type AdminChatSummary = {
   id: string;
@@ -48,6 +49,19 @@ type RuntimeCheck = {
   openclawUseMock: string;
   pm2Name: string;
   kids: RuntimeKidCheck[];
+  imageGeneration: {
+    provider: string;
+    model: string;
+    hasGeminiApiKey: boolean;
+    hasGeminiImageModel: boolean;
+    uploadMaxBytes: number;
+    uploadMaxWidth: number;
+    uploadMaxHeight: number;
+    uploadMaxPixels: number;
+    uploadMinIntervalMs: number;
+    acceptedMimeTypes: string[];
+    issues: string[];
+  };
   issues: string[];
 };
 
@@ -58,7 +72,49 @@ type EnvValues = {
   pm2Name: string;
 };
 
-type TextSettings = Record<string, { name: string; emoji: string; accentColor: string; title: string; welcome: string }>;
+type KidMediaStorageStat = {
+  kidId: string;
+  fileCount: number;
+  totalBytes: number;
+  latestModifiedAt: string | null;
+};
+
+type MediaStorageSummary = {
+  rootPath: string;
+  totalFileCount: number;
+  totalBytes: number;
+  kids: KidMediaStorageStat[];
+};
+
+type SmokeTestEntry = {
+  key: 'chain' | 'media-agent' | 'gemini-direct';
+  label: string;
+  ok: boolean;
+  message: string;
+  provider?: string;
+  model?: string;
+  imageCount?: number;
+  elapsedMs?: number;
+  ranAt: string;
+};
+
+type SmokeTestLog = {
+  imageGeneration: Record<string, SmokeTestEntry | undefined>;
+};
+
+type TextSettings = Record<string, {
+  name: string;
+  emoji: string;
+  accentColor: string;
+  title: string;
+  welcome: string;
+  ttsEnabled: boolean;
+  ttsPreferredVoiceName: string;
+  ttsRate: number;
+  imageGenerationEnabled: boolean;
+  imageUnderstandingEnabled: boolean;
+  imageEditEnabled: boolean;
+}>;
 
 type ProfileFormState = {
   name: string;
@@ -76,8 +132,48 @@ type HistoryRange = 'all' | '7d' | 'today';
 
 const COMMON_EMOJIS = ['🌸', '🚀', '🦄', '🐼', '🐱', '🐶', '⭐', '🎨', '📚', '🧠', '🦋', '🌈'];
 
+function getPreferredVoiceKeywords(lang: string) {
+  if (lang === 'zh-CN') return ['tingting', 'mei-jia', 'sin-ji', 'xiaoxiao', 'yunxi', 'natural'];
+  if (lang === 'fr-CA') return ['amélie', 'amelie', 'thomas', 'audrey', 'chantal', 'natural'];
+  return ['ava', 'samantha', 'victoria', 'allison', 'daniel', 'serena', 'natural'];
+}
+
+function getExpectedVoiceLang(kidName: string) {
+  const normalized = kidName.toLowerCase();
+  if (normalized.includes('grace')) return 'zh-CN';
+  if (normalized.includes('george')) return 'zh-CN';
+  return 'zh-CN';
+}
+
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function getCapabilityStateText(enabled: boolean) {
+  return enabled ? '已开启' : '已关闭';
+}
+
+function getCapabilitySummary(setting: { imageGenerationEnabled: boolean; imageUnderstandingEnabled: boolean; imageEditEnabled: boolean; ttsEnabled: boolean }) {
+  return [
+    `解释图片：${getCapabilityStateText(setting.imageUnderstandingEnabled !== false)}`,
+    `生成图片：${getCapabilityStateText(setting.imageGenerationEnabled !== false)}`,
+    `参考图改图：${getCapabilityStateText(setting.imageEditEnabled === true)}`,
+    `手动朗读：${getCapabilityStateText(setting.ttsEnabled !== false)}`,
+  ];
+}
+
+function formatBytes(bytes: number) {
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${bytes} B`;
+}
+
+function formatLocalDateTime(value?: string | null) {
+  if (!value) return '尚未运行';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('zh-CN');
 }
 
 function isWithinHistoryRange(updatedAt: string, range: HistoryRange) {
@@ -166,15 +262,23 @@ function renderHighlightedText(text: string, query: string) {
   );
 }
 
-export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; textSettings: TextSettings; runtimeCheck: RuntimeCheck }) {
+export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; textSettings: TextSettings; runtimeCheck: RuntimeCheck; mediaStorage: MediaStorageSummary; smokeTests: SmokeTestLog }) {
   const [activeKid, setActiveKid] = useState(props.kids[0]?.id || '');
   const [activeTab, setActiveTab] = useState<TabKey>('memory');
   const [saving, setSaving] = useState(false);
   const [restarting, setRestarting] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [agentCheckingKidId, setAgentCheckingKidId] = useState('');
+  const [imageRuntimeChecking, setImageRuntimeChecking] = useState(false);
+  const [imageSmokeTesting, setImageSmokeTesting] = useState(false);
+  const [mediaSmokeTesting, setMediaSmokeTesting] = useState(false);
+  const [geminiSmokeTesting, setGeminiSmokeTesting] = useState(false);
+  const [mediaStorageRefreshing, setMediaStorageRefreshing] = useState(false);
+  const [mediaStorageCleaningKidId, setMediaStorageCleaningKidId] = useState('');
+  const [ttsPreviewingKidId, setTtsPreviewingKidId] = useState('');
   const [profileEditorMode, setProfileEditorMode] = useState<'json' | 'form'>('json');
   const [allowUnknownProfileFields, setAllowUnknownProfileFields] = useState(false);
+  const [availableVoices, setAvailableVoices] = useState<Array<{ value: string; label: string }>>([]);
   const [historyRangeByKid, setHistoryRangeByKid] = useState<Record<string, HistoryRange>>(() =>
     Object.fromEntries(props.kids.map((kid) => [kid.id, 'all'])),
   );
@@ -194,6 +298,7 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
   );
   const [envValues, setEnvValues] = useState<EnvValues>(props.envValues);
   const [textSettings, setTextSettings] = useState<TextSettings>(props.textSettings);
+  const [mediaStorage, setMediaStorage] = useState<MediaStorageSummary>(props.mediaStorage);
 
   const activeKidData = useMemo(() => props.kids.find((kid) => kid.id === activeKid) ?? props.kids[0] ?? null, [props.kids, activeKid]);
 
@@ -210,6 +315,10 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
 
   const historyQuery = activeKidData ? historyQueryByKid[activeKidData.id] || '' : '';
   const historyRange = activeKidData ? historyRangeByKid[activeKidData.id] || 'all' : 'all';
+  const activeKidSettings = activeKid ? textSettings[activeKid] : undefined;
+  const imageRuntimeHealthy = props.runtimeCheck.imageGeneration.issues.length === 0;
+  const activeKidMediaStorage = activeKid ? mediaStorage.kids.find((kid) => kid.kidId === activeKid) : undefined;
+  const smokeTestEntries = Object.values(props.smokeTests.imageGeneration).filter(Boolean) as SmokeTestEntry[];
 
   const filteredChats = useMemo(() => {
     if (!activeKidData) return [] as AdminChatSummary[];
@@ -240,6 +349,40 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
     if (activeTab !== 'profile') return;
     setProfileForm(profileJsonToForm(currentValue));
   }, [activeTab, activeKid, currentValue]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+
+    const loadVoices = () => {
+      const voices = window.speechSynthesis.getVoices();
+      const lang = getExpectedVoiceLang(activeKidData?.name || '');
+      const preferredKeywords = getPreferredVoiceKeywords(lang);
+
+      const items = voices.map((voice) => {
+        const tags: string[] = [];
+        if (voice.default) tags.push('默认');
+        if (voice.localService) tags.push('本机');
+        if (voice.lang.toLowerCase().startsWith(lang.toLowerCase().split('-')[0] || lang.toLowerCase())) tags.push('语言匹配');
+        if (preferredKeywords.some((keyword) => voice.name.toLowerCase().includes(keyword))) tags.push('推荐');
+
+        return {
+          value: `${voice.name} (${voice.lang})`,
+          label: `${voice.name} (${voice.lang})${tags.length ? ` — ${tags.join(' · ')}` : ''}`,
+        };
+      });
+
+      const deduped = Array.from(new Map(items.map((item) => [item.value, item])).values());
+      deduped.sort((a, b) => a.label.localeCompare(b.label));
+      setAvailableVoices(deduped);
+    };
+
+    loadVoices();
+    window.speechSynthesis.onvoiceschanged = loadVoices;
+
+    return () => {
+      window.speechSynthesis.onvoiceschanged = null;
+    };
+  }, [activeKidData?.name]);
 
   function setCurrentValue(value: string) {
     if (!activeKidData || activeTab === 'env' || activeTab === 'text') return;
@@ -277,7 +420,7 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
     }));
   }
 
-  function setKidText(kidId: string, field: 'name' | 'emoji' | 'accentColor' | 'title' | 'welcome', value: string) {
+  function setKidText(kidId: string, field: 'name' | 'emoji' | 'accentColor' | 'title' | 'welcome' | 'ttsPreferredVoiceName', value: string) {
     setTextSettings((prev) => ({
       ...prev,
       [kidId]: {
@@ -285,6 +428,150 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
         [field]: value,
       },
     }));
+  }
+
+  function setKidTts(kidId: string, field: 'ttsEnabled' | 'ttsRate', value: boolean | number) {
+    setTextSettings((prev) => ({
+      ...prev,
+      [kidId]: {
+        ...prev[kidId],
+        [field]: value,
+      },
+    }));
+  }
+
+  function setKidCapability(kidId: string, field: 'imageGenerationEnabled' | 'imageUnderstandingEnabled' | 'imageEditEnabled', value: boolean) {
+    setTextSettings((prev) => ({
+      ...prev,
+      [kidId]: {
+        ...prev[kidId],
+        [field]: value,
+      },
+    }));
+  }
+
+  async function onCheckImageRuntime() {
+    setImageRuntimeChecking(true);
+    setStatus('');
+
+    try {
+      const response = await fetch('/api/runtime-check-image');
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || '图片生成运行时检查失败');
+      }
+      setStatus(data.message || '图片生成运行时检查完成。');
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '图片生成运行时检查失败');
+    } finally {
+      setImageRuntimeChecking(false);
+    }
+  }
+
+  async function onRunImageSmokeTest() {
+    setImageSmokeTesting(true);
+    setStatus('');
+
+    try {
+      const response = await fetch('/api/runtime-check-image-smoke', {
+        method: 'POST',
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || '图片生成 smoke test 失败');
+      }
+      const debug = data.debug ? `\n\n调试信息：${JSON.stringify(data.debug)}` : '';
+      setStatus((data.message || '图片生成 smoke test 成功。') + debug);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '图片生成 smoke test 失败');
+    } finally {
+      setImageSmokeTesting(false);
+    }
+  }
+
+  async function onRunMediaSmokeTest() {
+    setMediaSmokeTesting(true);
+    setStatus('');
+
+    try {
+      const response = await fetch('/api/runtime-check-image-media', { method: 'POST' });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || '智媒 smoke test 失败');
+      }
+      const debug = data.debug ? `\n\n调试信息：${JSON.stringify(data.debug)}` : '';
+      setStatus((data.message || '智媒 smoke test 成功。') + debug);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '智媒 smoke test 失败');
+    } finally {
+      setMediaSmokeTesting(false);
+    }
+  }
+
+  async function onRunGeminiSmokeTest() {
+    setGeminiSmokeTesting(true);
+    setStatus('');
+
+    try {
+      const response = await fetch('/api/runtime-check-image-gemini', { method: 'POST' });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Gemini direct smoke test 失败');
+      }
+      const debug = data.debug ? `\n\n调试信息：${JSON.stringify(data.debug)}` : '';
+      setStatus((data.message || 'Gemini direct smoke test 成功。') + debug);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Gemini direct smoke test 失败');
+    } finally {
+      setGeminiSmokeTesting(false);
+    }
+  }
+
+  async function onRefreshMediaStorage() {
+    setMediaStorageRefreshing(true);
+    setStatus('');
+
+    try {
+      const response = await fetch('/api/media-storage');
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || '读取本地图片占用失败');
+      }
+      setMediaStorage(data);
+      setStatus('已刷新本地图片占用统计。');
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '读取本地图片占用失败');
+    } finally {
+      setMediaStorageRefreshing(false);
+    }
+  }
+
+  async function onCleanupKidMediaStorage(kidId: string) {
+    if (typeof window !== 'undefined') {
+      const confirmed = window.confirm(`确定要清理 ${kidId} 的本地图片缓存吗？此操作会删除该孩子当前保存的上传图和生成图。`);
+      if (!confirmed) return;
+    }
+
+    setMediaStorageCleaningKidId(kidId);
+    setStatus('');
+
+    try {
+      const response = await fetch('/api/media-storage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kidId }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || '清理本地图片缓存失败');
+      }
+      setMediaStorage(data.summary);
+      setStatus(data.message || `已清理 ${kidId} 的本地图片缓存。`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '清理本地图片缓存失败');
+    } finally {
+      setMediaStorageCleaningKidId('');
+    }
   }
 
   async function onSave() {
@@ -308,7 +595,7 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
         return;
       }
 
-      if (activeTab === 'text') {
+      if (activeTab === 'text' || activeTab === 'tts') {
         const response = await fetch('/api/kid-settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -320,7 +607,7 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
           throw new Error(data.error || '保存失败');
         }
 
-        setStatus(data.message || '孩子标题和欢迎语已保存。');
+        setStatus(activeTab === 'tts' ? (data.message || 'TTS 设置已保存。') : (data.message || '孩子标题和欢迎语已保存。'));
         return;
       }
 
@@ -419,6 +706,53 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
     }
   }
 
+  function onPreviewTts(kidId: string) {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      setStatus('当前浏览器不支持 TTS 试听。');
+      return;
+    }
+
+    const current = textSettings[kidId];
+    if (!current?.ttsEnabled) {
+      setStatus('当前孩子的 TTS 已关闭，无法试听。');
+      return;
+    }
+
+    if (ttsPreviewingKidId === kidId) {
+      window.speechSynthesis.cancel();
+      setTtsPreviewingKidId('');
+      setStatus('已停止 TTS 试听。');
+      return;
+    }
+
+    const voices = window.speechSynthesis.getVoices();
+    const selectedVoice = current.ttsPreferredVoiceName
+      ? voices.find((voice) => `${voice.name} (${voice.lang})` === current.ttsPreferredVoiceName)
+      : null;
+
+    window.speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(`你好，${current.name}。这是语音试听。现在的语速是 ${(current.ttsRate ?? 0.9).toFixed(2)}。`);
+    utterance.rate = current.ttsRate ?? 0.9;
+    utterance.pitch = 1.02;
+    utterance.volume = 1;
+    utterance.lang = selectedVoice?.lang || 'zh-CN';
+    if (selectedVoice) {
+      utterance.voice = selectedVoice;
+    }
+    utterance.onend = () => {
+      setTtsPreviewingKidId('');
+    };
+    utterance.onerror = () => {
+      setTtsPreviewingKidId('');
+      setStatus('TTS 试听失败，请换一个 voice 再试。');
+    };
+
+    setTtsPreviewingKidId(kidId);
+    setStatus(selectedVoice ? `正在试听：${selectedVoice.name}（${selectedVoice.lang}）` : '正在试听自动选择的语音。');
+    window.speechSynthesis.speak(utterance);
+  }
+
   return (
     <main className="shell home memory-admin-page">
       <section className="hero hero-kids">
@@ -446,6 +780,122 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
           <div className="runtime-check-summary">
             <div><strong>OPENCLAW_USE_MOCK:</strong> {props.runtimeCheck.openclawUseMock}</div>
             <div><strong>PM2 服务名:</strong> {props.runtimeCheck.pm2Name}</div>
+            <div><strong>图片后端状态:</strong> {imageRuntimeHealthy ? '✅ 可用' : '⚠️ 需要处理'}</div>
+            <div><strong>图片生成 Provider:</strong> {props.runtimeCheck.imageGeneration.provider}</div>
+            <div><strong>图片生成 Model:</strong> {props.runtimeCheck.imageGeneration.model}</div>
+            <div><strong>Gemini API Key:</strong> {props.runtimeCheck.imageGeneration.hasGeminiApiKey ? '✅ 已检测到' : '⚠️ 未检测到'}</div>
+            <div><strong>Gemini Image Model:</strong> {props.runtimeCheck.imageGeneration.hasGeminiImageModel ? '✅ 已配置' : '⚠️ 未配置'}</div>
+            <div><strong>允许上传格式:</strong> {getAcceptedImageTypeLabel()}</div>
+            <div><strong>单张上传上限:</strong> {formatBytesToMb(props.runtimeCheck.imageGeneration.uploadMaxBytes)}</div>
+            <div><strong>图片尺寸上限:</strong> {props.runtimeCheck.imageGeneration.uploadMaxWidth} × {props.runtimeCheck.imageGeneration.uploadMaxHeight}</div>
+            <div><strong>像素总量上限:</strong> {(props.runtimeCheck.imageGeneration.uploadMaxPixels / 1_000_000).toFixed(0)}MP</div>
+            <div><strong>上传节流:</strong> 每次上传至少间隔 {Math.ceil(props.runtimeCheck.imageGeneration.uploadMinIntervalMs / 1000)} 秒</div>
+          </div>
+
+          <div className="runtime-check-image-tools">
+            <div className="runtime-check-card media-storage-card">
+              <div className="runtime-check-header">
+                <strong>本地图片占用</strong>
+                <button
+                  type="button"
+                  className="runtime-check-button"
+                  onClick={onRefreshMediaStorage}
+                  disabled={mediaStorageRefreshing || mediaStorageCleaningKidId !== '' || restarting || saving}
+                >
+                  {mediaStorageRefreshing ? '刷新中…' : '刷新占用统计'}
+                </button>
+              </div>
+              <div className="runtime-check-summary">
+                <div><strong>总文件数:</strong> {mediaStorage.totalFileCount}</div>
+                <div><strong>总占用:</strong> {formatBytes(mediaStorage.totalBytes)}</div>
+                <div><strong>存储目录:</strong> {mediaStorage.rootPath}</div>
+              </div>
+              <div className="runtime-check-kids">
+                {mediaStorage.kids.map((kidStat) => (
+                  <div key={kidStat.kidId} className="runtime-kid-card">
+                    <strong>{props.kids.find((kid) => kid.id === kidStat.kidId)?.name || kidStat.kidId}</strong>
+                    <div>图片文件数：{kidStat.fileCount}</div>
+                    <div>磁盘占用：{formatBytes(kidStat.totalBytes)}</div>
+                    <div>最近更新：{kidStat.latestModifiedAt ? new Date(kidStat.latestModifiedAt).toLocaleString('zh-CN') : '暂无图片'}</div>
+                    <button
+                      type="button"
+                      className="runtime-check-button"
+                      onClick={() => onCleanupKidMediaStorage(kidStat.kidId)}
+                      disabled={kidStat.fileCount === 0 || mediaStorageCleaningKidId === kidStat.kidId || mediaStorageRefreshing || restarting || saving}
+                    >
+                      {mediaStorageCleaningKidId === kidStat.kidId ? '清理中…' : '清理该孩子图片缓存'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <div className="env-admin-note">这里只清理本机 `public/chat-media/` 下的图片缓存，不会改动聊天记录 JSON。</div>
+            </div>
+            <div className="runtime-check-card media-storage-card">
+              <div className="runtime-check-header">
+                <strong>最近 smoke test 结果</strong>
+                <span>{smokeTestEntries.length ? `${smokeTestEntries.length} 条记录` : '暂无记录'}</span>
+              </div>
+              {smokeTestEntries.length ? (
+                <div className="runtime-check-kids">
+                  {smokeTestEntries.map((entry) => (
+                    <div key={entry.key} className="runtime-kid-card">
+                      <strong>{entry.label}</strong>
+                      <div>状态：{entry.ok ? '✅ 成功' : '⚠️ 失败'}</div>
+                      <div>时间：{formatLocalDateTime(entry.ranAt)}</div>
+                      <div>Provider / Model：{entry.provider || '-'} / {entry.model || '-'}</div>
+                      <div>返回图片数：{entry.imageCount ?? '-'}</div>
+                      <div>耗时：{typeof entry.elapsedMs === 'number' ? `${entry.elapsedMs}ms` : '-'}</div>
+                      <div>{entry.message}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="env-admin-note">还没有 smoke test 历史记录。运行一次上面的测试后，这里会显示最近结果。</div>
+              )}
+            </div>
+            <div className="runtime-check-button-row">
+              <button
+                type="button"
+                className="runtime-check-button"
+                onClick={onCheckImageRuntime}
+                disabled={imageRuntimeChecking || imageSmokeTesting || mediaSmokeTesting || geminiSmokeTesting || restarting || saving}
+              >
+                {imageRuntimeChecking ? '检查中…' : '检查图片生成运行时'}
+              </button>
+              <button
+                type="button"
+                className="runtime-check-button"
+                onClick={onRunMediaSmokeTest}
+                disabled={mediaSmokeTesting || imageRuntimeChecking || imageSmokeTesting || geminiSmokeTesting || restarting || saving}
+              >
+                {mediaSmokeTesting ? '测试中…' : '仅测试智媒'}
+              </button>
+              <button
+                type="button"
+                className="runtime-check-button"
+                onClick={onRunGeminiSmokeTest}
+                disabled={geminiSmokeTesting || imageRuntimeChecking || imageSmokeTesting || mediaSmokeTesting || restarting || saving}
+              >
+                {geminiSmokeTesting ? '测试中…' : '仅测试 Gemini direct'}
+              </button>
+              <button
+                type="button"
+                className="runtime-check-button"
+                onClick={onRunImageSmokeTest}
+                disabled={imageSmokeTesting || imageRuntimeChecking || mediaSmokeTesting || geminiSmokeTesting || restarting || saving}
+              >
+                {imageSmokeTesting ? '测试中…' : '运行整链 smoke test'}
+              </button>
+            </div>
+            {props.runtimeCheck.imageGeneration.issues.length ? (
+              <ul>
+                {props.runtimeCheck.imageGeneration.issues.map((issue) => (
+                  <li key={issue}>{issue}</li>
+                ))}
+              </ul>
+            ) : (
+              <div className="runtime-check-ok-small">图片生成运行时配置检查通过。</div>
+            )}
           </div>
 
           {props.runtimeCheck.issues.length ? (
@@ -514,6 +964,9 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
             <button className={activeTab === 'text' ? 'admin-tab active' : 'admin-tab'} onClick={() => setActiveTab('text')}>
               标题与欢迎语
             </button>
+            <button className={activeTab === 'tts' ? 'admin-tab active' : 'admin-tab'} onClick={() => setActiveTab('tts')}>
+              TTS 语音
+            </button>
             <button className={activeTab === 'history' ? 'admin-tab active' : 'admin-tab'} onClick={() => setActiveTab('history')}>
               聊天记录
             </button>
@@ -530,9 +983,11 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
                 ? '环境变量 · .env.local'
                 : activeTab === 'text'
                   ? `${activeKidData?.name || '未知孩子'} · 标题与欢迎语`
-                  : activeTab === 'history'
-                    ? `${activeKidData?.name || '未知孩子'} · 聊天记录`
-                    : `${activeKidData?.name || '未知孩子'} · ${activeTab === 'memory' ? 'MEMORY.md' : 'profile.json'}`}
+                  : activeTab === 'tts'
+                    ? `${activeKidData?.name || '未知孩子'} · TTS 语音设置`
+                    : activeTab === 'history'
+                      ? `${activeKidData?.name || '未知孩子'} · 聊天记录`
+                      : `${activeKidData?.name || '未知孩子'} · ${activeTab === 'memory' ? 'MEMORY.md' : 'profile.json'}`}
             </strong>
             <div className="memory-admin-actions">
               {activeTab === 'profile' ? (
@@ -571,7 +1026,7 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
                 </button>
               ) : null}
               {activeTab !== 'history' ? (
-                <button onClick={onSave} disabled={saving || restarting || ((activeTab === 'memory' || activeTab === 'profile' || activeTab === 'text') && !activeKidData)}>
+                <button onClick={onSave} disabled={saving || restarting || ((activeTab === 'memory' || activeTab === 'profile' || activeTab === 'text' || activeTab === 'tts') && !activeKidData)}>
                   {saving ? '保存中…' : '保存'}
                 </button>
               ) : null}
@@ -634,6 +1089,35 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
           ) : activeTab === 'text' ? (
             <div className="env-admin-form">
               <p className="env-admin-note">在这里可以修改首页卡片和聊天页会用到的孩子基础信息。</p>
+
+              {activeKidSettings ? (
+                <div className="env-fieldset">
+                  <div className="env-fieldset-title">图片 / 语音能力总览</div>
+                  <div className="runtime-check-summary">
+                    <div><strong>孩子权限:</strong> {getCapabilitySummary(activeKidSettings).join(' · ')}</div>
+                    <div><strong>图片后端状态:</strong> {imageRuntimeHealthy ? '✅ 当前运行正常' : '⚠️ 运行配置待处理'}</div>
+                    <div><strong>当前图片 Provider:</strong> {props.runtimeCheck.imageGeneration.provider}</div>
+                    <div><strong>允许上传格式:</strong> {getAcceptedImageTypeLabel()}</div>
+                    <div><strong>单张上传上限:</strong> {formatBytesToMb(props.runtimeCheck.imageGeneration.uploadMaxBytes)}</div>
+                    <div><strong>图片尺寸上限:</strong> {props.runtimeCheck.imageGeneration.uploadMaxWidth} × {props.runtimeCheck.imageGeneration.uploadMaxHeight} · {(props.runtimeCheck.imageGeneration.uploadMaxPixels / 1_000_000).toFixed(0)}MP</div>
+                    <div><strong>上传节流:</strong> 每次上传至少间隔 {Math.ceil(props.runtimeCheck.imageGeneration.uploadMinIntervalMs / 1000)} 秒</div>
+                  </div>
+                  <div className="env-admin-note">这里的“孩子权限”决定按钮是否出现在孩子聊天页；上面的“图片后端状态”决定这些能力当前是否真的能跑通。</div>
+                </div>
+              ) : null}
+
+              {activeKidSettings ? (
+                <div className="env-fieldset">
+                  <div className="env-fieldset-title">孩子侧能力预览</div>
+                  <div className="runtime-check-summary">
+                    <div><strong>会显示的模式按钮:</strong> 普通聊天{activeKidSettings.imageUnderstandingEnabled !== false ? ' · 看图解释' : ''}{activeKidSettings.imageGenerationEnabled !== false ? ' · 生成图片' : ''}{activeKidSettings.imageEditEnabled === true ? ' · 参考图改图' : ''}</div>
+                    <div><strong>会显示上传图片按钮:</strong> {activeKidSettings.imageUnderstandingEnabled !== false ? '会显示' : '不会显示'}</div>
+                    <div><strong>会显示朗读按钮:</strong> {activeKidSettings.ttsEnabled !== false ? '会显示（仅 assistant 回复旁）' : '不会显示'}</div>
+                    <div><strong>当前缓存占用:</strong> {activeKidMediaStorage ? `${activeKidMediaStorage.fileCount} 个文件 · ${formatBytes(activeKidMediaStorage.totalBytes)}` : '暂无统计'}</div>
+                  </div>
+                  <div className="env-admin-note">这块是站在孩子视角看的：家长改完开关后，孩子聊天页实际会看到什么，尽量一眼看明白。</div>
+                </div>
+              ) : null}
 
               <label className="env-field">
                 <span>{activeKidData?.name || '当前孩子'} 名字</span>
@@ -704,6 +1188,90 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
                   placeholder="设置进入聊天时显示的欢迎语"
                 />
               </label>
+
+              <div className="env-fieldset">
+                <div className="env-fieldset-title">图片能力控制</div>
+                <div className="env-admin-note">建议把“是否允许孩子使用图片功能”和“系统图片后端是否正常”分开看：前者在这里控制，后者看页面顶部运行环境自检。</div>
+                <label className="env-checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={textSettings[activeKid]?.imageGenerationEnabled !== false}
+                    onChange={(event) => setKidCapability(activeKid, 'imageGenerationEnabled', event.target.checked)}
+                  />
+                  <span>允许生成图片</span>
+                </label>
+                <label className="env-checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={textSettings[activeKid]?.imageUnderstandingEnabled !== false}
+                    onChange={(event) => setKidCapability(activeKid, 'imageUnderstandingEnabled', event.target.checked)}
+                  />
+                  <span>允许解释图片</span>
+                </label>
+                <label className="env-checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={textSettings[activeKid]?.imageEditEnabled === true}
+                    onChange={(event) => setKidCapability(activeKid, 'imageEditEnabled', event.target.checked)}
+                  />
+                  <span>允许参考图改图（预留）</span>
+                </label>
+              </div>
+            </div>
+          ) : activeTab === 'tts' ? (
+            <div className="env-admin-form">
+              <p className="env-admin-note">管理孩子端手动朗读回复时使用的 TTS 设置。当前版本仅影响手动点击朗读按钮，不会自动朗读最新消息。</p>
+              <p className="env-admin-note">Voice 列表会尽量标出推荐项、语言匹配项、本机 voice 和系统默认 voice，帮助家长更快找到合适的声音。</p>
+
+              <label className="env-field">
+                <span>TTS 开关</span>
+                <select
+                  value={textSettings[activeKid]?.ttsEnabled ? 'true' : 'false'}
+                  onChange={(event) => setKidTts(activeKid, 'ttsEnabled', event.target.value === 'true')}
+                >
+                  <option value="true">开启</option>
+                  <option value="false">关闭</option>
+                </select>
+              </label>
+
+              <label className="env-field">
+                <span>偏好 Voice</span>
+                <select
+                  value={textSettings[activeKid]?.ttsPreferredVoiceName || ''}
+                  onChange={(event) => setKidText(activeKid, 'ttsPreferredVoiceName', event.target.value)}
+                >
+                  <option value="">自动选择（推荐）</option>
+                  {availableVoices.map((voice) => (
+                    <option key={voice.value} value={voice.value}>
+                      {voice.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="env-field">
+                <span>语速</span>
+                <input
+                  type="range"
+                  min="0.6"
+                  max="1.2"
+                  step="0.05"
+                  value={textSettings[activeKid]?.ttsRate ?? 0.9}
+                  onChange={(event) => setKidTts(activeKid, 'ttsRate', Number(event.target.value))}
+                />
+                <div className="env-admin-note">当前语速：{(textSettings[activeKid]?.ttsRate ?? 0.9).toFixed(2)}</div>
+              </label>
+
+              <div className="tts-preview-row">
+                <button
+                  type="button"
+                  className="admin-secondary-button"
+                  onClick={() => onPreviewTts(activeKid)}
+                  disabled={ttsPreviewingKidId !== '' && ttsPreviewingKidId !== activeKid}
+                >
+                  {ttsPreviewingKidId === activeKid ? '停止试听' : '试听当前语音'}
+                </button>
+              </div>
             </div>
           ) : activeTab === 'history' ? (
             <div className="admin-history-layout">

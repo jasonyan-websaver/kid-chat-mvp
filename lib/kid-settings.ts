@@ -11,6 +11,12 @@ type KidOverrides = {
   accentColor?: string;
   title?: string;
   welcome?: string;
+  ttsEnabled?: boolean;
+  ttsPreferredVoiceName?: string;
+  ttsRate?: number;
+  imageGenerationEnabled?: boolean;
+  imageUnderstandingEnabled?: boolean;
+  imageEditEnabled?: boolean;
 };
 
 type KidSettingsFile = Record<string, KidOverrides>;
@@ -29,6 +35,14 @@ function normalizeAccentColor(value: string | undefined, fallback: string) {
   return /^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/.test(color) ? color : fallback;
 }
 
+function normalizeTtsRate(value: number | undefined, fallback = 0.9) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0.6 && value <= 1.2 ? value : fallback;
+}
+
+function normalizeBoolean(value: boolean | undefined, fallback: boolean) {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
 export async function getConfiguredKids(): Promise<KidProfile[]> {
   const settings = await readSettingsFile();
   return kids.map((kid) => ({
@@ -38,6 +52,16 @@ export async function getConfiguredKids(): Promise<KidProfile[]> {
     accentColor: normalizeAccentColor(settings[kid.id]?.accentColor, kid.accentColor),
     title: settings[kid.id]?.title?.trim() || kid.title,
     welcome: settings[kid.id]?.welcome?.trim() || kid.welcome,
+    tts: {
+      enabled: settings[kid.id]?.ttsEnabled !== false,
+      preferredVoiceName: settings[kid.id]?.ttsPreferredVoiceName?.trim() || '',
+      rate: normalizeTtsRate(settings[kid.id]?.ttsRate, 0.9),
+    },
+    capabilities: {
+      imageGeneration: normalizeBoolean(settings[kid.id]?.imageGenerationEnabled, kid.capabilities?.imageGeneration ?? true),
+      imageUnderstanding: normalizeBoolean(settings[kid.id]?.imageUnderstandingEnabled, kid.capabilities?.imageUnderstanding ?? true),
+      imageEdit: normalizeBoolean(settings[kid.id]?.imageEditEnabled, kid.capabilities?.imageEdit ?? false),
+    },
   }));
 }
 
@@ -53,6 +77,16 @@ export async function getConfiguredKidById(kidId: string): Promise<KidProfile | 
     accentColor: normalizeAccentColor(settings[base.id]?.accentColor, base.accentColor),
     title: settings[base.id]?.title?.trim() || base.title,
     welcome: settings[base.id]?.welcome?.trim() || base.welcome,
+    tts: {
+      enabled: settings[base.id]?.ttsEnabled !== false,
+      preferredVoiceName: settings[base.id]?.ttsPreferredVoiceName?.trim() || '',
+      rate: normalizeTtsRate(settings[base.id]?.ttsRate, 0.9),
+    },
+    capabilities: {
+      imageGeneration: normalizeBoolean(settings[base.id]?.imageGenerationEnabled, base.capabilities?.imageGeneration ?? true),
+      imageUnderstanding: normalizeBoolean(settings[base.id]?.imageUnderstandingEnabled, base.capabilities?.imageUnderstanding ?? true),
+      imageEdit: normalizeBoolean(settings[base.id]?.imageEditEnabled, base.capabilities?.imageEdit ?? false),
+    },
   };
 }
 
@@ -67,12 +101,18 @@ export async function readKidTextSettings() {
         accentColor: normalizeAccentColor(settings[kid.id]?.accentColor, kid.accentColor),
         title: settings[kid.id]?.title?.trim() || kid.title,
         welcome: settings[kid.id]?.welcome?.trim() || kid.welcome,
+        ttsEnabled: settings[kid.id]?.ttsEnabled !== false,
+        ttsPreferredVoiceName: settings[kid.id]?.ttsPreferredVoiceName?.trim() || '',
+        ttsRate: normalizeTtsRate(settings[kid.id]?.ttsRate, 0.9),
+        imageGenerationEnabled: normalizeBoolean(settings[kid.id]?.imageGenerationEnabled, kid.capabilities?.imageGeneration ?? true),
+        imageUnderstandingEnabled: normalizeBoolean(settings[kid.id]?.imageUnderstandingEnabled, kid.capabilities?.imageUnderstanding ?? true),
+        imageEditEnabled: normalizeBoolean(settings[kid.id]?.imageEditEnabled, kid.capabilities?.imageEdit ?? false),
       },
     ]),
-  ) as Record<string, { name: string; emoji: string; accentColor: string; title: string; welcome: string }>;
+  ) as Record<string, { name: string; emoji: string; accentColor: string; title: string; welcome: string; ttsEnabled: boolean; ttsPreferredVoiceName: string; ttsRate: number; imageGenerationEnabled: boolean; imageUnderstandingEnabled: boolean; imageEditEnabled: boolean }>;
 }
 
-export async function writeKidTextSettings(input: Record<string, { name?: string; emoji?: string; accentColor?: string; title?: string; welcome?: string }>) {
+export async function writeKidTextSettings(input: Record<string, { name?: string; emoji?: string; accentColor?: string; title?: string; welcome?: string; ttsEnabled?: boolean; ttsPreferredVoiceName?: string; ttsRate?: number; imageGenerationEnabled?: boolean; imageUnderstandingEnabled?: boolean; imageEditEnabled?: boolean }>) {
   const next: KidSettingsFile = {};
 
   for (const kid of kids) {
@@ -82,6 +122,12 @@ export async function writeKidTextSettings(input: Record<string, { name?: string
       accentColor: normalizeAccentColor(input[kid.id]?.accentColor, kid.accentColor),
       title: input[kid.id]?.title?.trim() || kid.title,
       welcome: input[kid.id]?.welcome?.trim() || kid.welcome,
+      ttsEnabled: input[kid.id]?.ttsEnabled !== false,
+      ttsPreferredVoiceName: input[kid.id]?.ttsPreferredVoiceName?.trim() || '',
+      ttsRate: normalizeTtsRate(input[kid.id]?.ttsRate, 0.9),
+      imageGenerationEnabled: normalizeBoolean(input[kid.id]?.imageGenerationEnabled, kid.capabilities?.imageGeneration ?? true),
+      imageUnderstandingEnabled: normalizeBoolean(input[kid.id]?.imageUnderstandingEnabled, kid.capabilities?.imageUnderstanding ?? true),
+      imageEditEnabled: normalizeBoolean(input[kid.id]?.imageEditEnabled, kid.capabilities?.imageEdit ?? false),
     };
   }
 

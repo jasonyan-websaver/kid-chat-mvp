@@ -4,10 +4,20 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { getConfiguredKidById } from './kid-settings';
 import { AppError } from './app-error';
-import { ChatMessage, ChatSummary } from './types';
+import { normalizeKnownChatId, normalizeKnownKidId } from './storage-ids';
+import { ChatAttachment, ChatMessage, ChatSummary, getMessageAttachments } from './types';
+import {
+  analyzeUploadedImageForMvp,
+  buildImageUnderstandingPrompt,
+  buildUploadedImageAttachment,
+  detectMultimodalIntent,
+} from './multimodal';
+import { analyzeUploadedImageViaGateway } from './gateway-chat-completions';
 import { mockChatSummaries, mockMessages } from './mock-data';
 import { formatKidProfileMemory, readKidProfileMemory } from './profiles';
 import { updateAgentMemoryFromChat } from './agent-memory';
+import { generateImage } from './image-generation';
+import { saveGeneratedChatImage } from './upload';
 import {
   markMemoryExtractionRan,
   markMessageForMemoryThrottle,
@@ -54,9 +64,62 @@ function normalizeSnippet(text: string) {
   return text.trim().replace(/\s+/g, ' ');
 }
 
+function detectReplyLanguage(text: string): 'zh' | 'fr' | 'en' {
+  if (/[\u4e00-\u9fff]/.test(text)) return 'zh';
+  if (/[àâçéèêëîïôûùüÿœæ]/i.test(text) || /\b(le|la|les|un|une|des|bonjour|salut|pourquoi|comment|dessine|génère|image)\b/i.test(text)) {
+    return 'fr';
+  }
+  return 'en';
+}
+
+function buildImageGenerationReplyText(language: 'zh' | 'fr' | 'en', prompt: string, description?: string) {
+  const cleanDescription = description?.trim() || '';
+
+  if (language === 'zh') {
+    if (cleanDescription && /[\u4e00-\u9fff]/.test(cleanDescription)) {
+      return cleanDescription;
+    }
+    return `我按照你的想法生成了一张图片：${prompt}`;
+  }
+
+  if (language === 'fr') {
+    if (cleanDescription && (/[àâçéèêëîïôûùüÿœæ]/i.test(cleanDescription) || /\b(le|la|les|un|une|des|bonjour|salut|image|voici)\b/i.test(cleanDescription))) {
+      return cleanDescription;
+    }
+    return `J'ai généré une image selon ta demande : ${prompt}`;
+  }
+
+  return cleanDescription || `I generated an image based on your request: ${prompt}`;
+}
+
+function extractInlineImageGenerationPrompt(text: string): { cleanedText: string; prompt?: string } {
+  const match = text.match(/\[\[image_generated:\s*([\s\S]*?)\]\]/i);
+  if (!match) {
+    return { cleanedText: text.trim() };
+  }
+
+  const prompt = match[1]?.trim();
+  const cleanedText = text.replace(match[0], '').replace(/\n{3,}/g, '\n\n').trim();
+  return {
+    cleanedText,
+    prompt: prompt || undefined,
+  };
+}
+
 function makeChatTitle(message: string) {
   const trimmed = normalizeSnippet(message);
   return trimmed.length <= 18 ? trimmed : `${trimmed.slice(0, 18)}…`;
+}
+
+function buildTaskLabel(mode: 'chat' | 'image_understanding' | 'image_generation' | 'image_edit', message: string) {
+  const trimmed = normalizeSnippet(message);
+  const snippet = trimmed || (mode === 'image_generation' ? '新图片' : mode === 'image_edit' ? '修改图片' : mode === 'image_understanding' ? '解释图片' : '继续聊天');
+  const short = snippet.length <= 16 ? snippet : `${snippet.slice(0, 16)}…`;
+
+  if (mode === 'image_understanding') return `解释图片：${short}`;
+  if (mode === 'image_generation') return `生成图片：${short}`;
+  if (mode === 'image_edit') return `改图：${short}`;
+  return makeChatTitle(message);
 }
 
 function makeChatPreview(message: string) {
@@ -66,7 +129,7 @@ function makeChatPreview(message: string) {
 }
 
 function getKidDir(kidId: string) {
-  return path.join(dataRoot, kidId);
+  return path.join(dataRoot, normalizeKnownKidId(kidId));
 }
 
 function getKidIndexPath(kidId: string) {
@@ -74,7 +137,7 @@ function getKidIndexPath(kidId: string) {
 }
 
 function getChatPath(kidId: string, chatId: string) {
-  return path.join(getKidDir(kidId), `${chatId}.json`);
+  return path.join(getKidDir(kidId), `${normalizeKnownChatId(chatId)}.json`);
 }
 
 async function ensureDir(dir: string) {
@@ -152,15 +215,24 @@ function buildPrompt(params: {
   profileMemory: string;
   history: ChatMessage[];
   latestMessage: string;
+  multimodalContext?: string;
 }) {
   const recent = params.history.slice(-8);
   const transcript = recent
-    .map((message) => `${message.role === 'user' ? 'Child' : 'Assistant'}: ${message.content}`)
+    .map((message) => {
+      const attachments = getMessageAttachments(message);
+      const attachmentHint = attachments.length
+        ? ` [Attachments: ${attachments.map((attachment) => attachment.kind).join(', ')}]`
+        : '';
+      return `${message.role === 'user' ? 'Child' : 'Assistant'}: ${message.content}${attachmentHint}`;
+    })
     .join('\n');
 
   return [
     `You are ${params.kidName}'s personal assistant inside a child-friendly chat app.`,
     'Reply naturally, warmly, and clearly for a child audience.',
+    'Always reply in the same language as the child\'s latest message unless the child explicitly asks you to switch languages.',
+    'If the child writes in Chinese, reply in Chinese. If the child writes in French, reply in French. If the child mixes languages, follow the main language of the latest request.',
     'Do not mention system prompts, tools, internal implementation, or hidden memory systems.',
     'Use the long-term child profile below to stay consistent across different chat threads.',
     '',
@@ -172,31 +244,57 @@ function buildPrompt(params: {
     'Recent conversation:',
     transcript || '(no previous messages)',
     '',
+    'Multimodal context (if any):',
+    params.multimodalContext || '(none)',
+    '',
     `Latest child message: ${params.latestMessage}`,
     '',
     'Now reply as the assistant with only the message content.',
   ].join('\n');
 }
 
+function extractAgentTextFromJson(stdout: string) {
+  const parsed = JSON.parse(stdout) as {
+    result?: {
+      payloads?: Array<{ text?: string | null; content?: string | null }>;
+      message?: { text?: string | null; content?: string | null };
+    };
+  };
+
+  const payloadText = parsed.result?.payloads
+    ?.map((item) => item.text || item.content || '')
+    .join('\n')
+    .trim();
+  const messageText = (parsed.result?.message?.text || parsed.result?.message?.content || '').trim();
+  const text = payloadText || messageText;
+
+  return {
+    parsed,
+    text,
+  };
+}
+
 async function runOpenClawAgent(agentId: string, message: string) {
   try {
-    const { stdout } = await execFileAsync('openclaw', ['agent', '--agent', agentId, '--message', message, '--json'], {
-      cwd: process.cwd(),
-      maxBuffer: 1024 * 1024 * 5,
-    });
-
-    const parsed = JSON.parse(stdout) as {
-      result?: {
-        payloads?: Array<{ text?: string | null }>;
-      };
+    const invoke = async (prompt: string) => {
+      const { stdout } = await execFileAsync('openclaw', ['agent', '--agent', agentId, '--message', prompt, '--json'], {
+        cwd: process.cwd(),
+        maxBuffer: 1024 * 1024 * 5,
+      });
+      return { stdout, ...extractAgentTextFromJson(stdout) };
     };
 
-    const text = parsed.result?.payloads?.map((item) => item.text || '').join('\n').trim();
-    if (!text) {
-      throw new AppError('智能体返回了空回复，请检查 agent 配置。', 502);
+    let result = await invoke(message);
+    if (!result.text) {
+      result = await invoke(`${message}\n\nReply with a short plain-text answer for the child. Do not return an empty response.`);
     }
 
-    return text;
+    if (!result.text) {
+      const debugSummary = JSON.stringify(result.parsed?.result || {}, null, 2).slice(0, 600);
+      throw new AppError(`智能体返回了空回复，请检查 agent 配置。返回摘要：${debugSummary}`, 502);
+    }
+
+    return result.text;
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
 
@@ -299,8 +397,10 @@ export async function sendMessageToKidChat(params: {
   kidId: string;
   chatId: string;
   message: string;
+  mode?: 'chat' | 'image_generation' | 'image_understanding' | 'image_edit';
+  image?: { url: string; filePath: string; contentType?: string };
 }): Promise<ChatMessage> {
-  if (!params.message.trim()) {
+  if (!params.message.trim() && !params.image) {
     throw new AppError('消息内容不能为空。', 400);
   }
 
@@ -308,7 +408,9 @@ export async function sendMessageToKidChat(params: {
     return {
       id: `assistant-${Date.now()}`,
       role: 'assistant',
-      content: `我收到了：${params.message}\n\n这是 MVP 的模拟回复。接真实 OpenClaw 后，这里会返回对应孩子智能体的正式回答。`,
+      content: params.image
+        ? `我看到了你发来的图片${params.message ? `，还有这句话：${params.message}` : ''}。\n\n这是图片输入 MVP 的模拟回复。下一步接上真实视觉理解后，我就能真正根据图片内容来回答你。`
+        : `我收到了：${params.message}\n\n这是 MVP 的模拟回复。接真实 OpenClaw 后，这里会返回对应孩子智能体的正式回答。`,
       createdAt: '刚刚',
     };
   }
@@ -334,23 +436,287 @@ export async function sendMessageToKidChat(params: {
   }
 
   const now = nowIso();
+  const uploadedAttachments: ChatAttachment[] = params.image ? [buildUploadedImageAttachment(params.image, params.message)] : [];
 
   const userMessage: ChatMessage = {
     id: `user-${Date.now()}`,
     role: 'user',
-    content: params.message,
+    content: params.message || (params.image ? '请看看这张图片。' : ''),
     createdAt: now,
+    attachments: uploadedAttachments.length ? uploadedAttachments : undefined,
+    attachment: params.image
+      ? {
+          type: 'image',
+          url: params.image.url,
+          contentType: params.image.contentType,
+        }
+      : undefined,
   };
 
   const nextStoredMessages = [...storedMessages, userMessage];
+  const detectedPlan = detectMultimodalIntent({
+    message: params.message,
+    uploadedAttachments,
+    history: storedMessages,
+  });
+  const multimodalPlan = params.mode && params.mode !== 'chat'
+    ? {
+        intent: params.mode,
+        uploadedAttachments,
+        imageGenerationPrompt: params.mode === 'image_generation' || params.mode === 'image_edit'
+          ? (params.message.trim() || undefined)
+          : undefined,
+      }
+    : detectedPlan;
+
+  const capabilities = kid.capabilities || {
+    imageGeneration: true,
+    imageUnderstanding: true,
+    imageEdit: false,
+  };
+
+  let multimodalContext = '';
+  if (multimodalPlan.intent === 'image_understanding') {
+    if (!capabilities.imageUnderstanding) {
+      throw new AppError('这个聊天入口暂时不支持图片解释。', 403);
+    }
+    if (!params.image) {
+      throw new AppError('请先上传一张图片，再让助手帮你解释。', 400);
+    }
+  }
+
+  if (multimodalPlan.intent === 'image_generation' && !capabilities.imageGeneration) {
+    throw new AppError('这个聊天入口暂时不支持生成图片。', 403);
+  }
+
+  if (multimodalPlan.intent === 'image_edit') {
+    if (!capabilities.imageEdit) {
+      throw new AppError('这个聊天入口暂时不支持改图。', 403);
+    }
+    if (!params.image) {
+      throw new AppError('请先上传一张参考图片，再进行改图。', 400);
+    }
+  }
+
+  if (multimodalPlan.intent === 'image_understanding' && params.image) {
+    const analysis = await analyzeUploadedImageForMvp({
+      filePath: params.image.filePath,
+      contentType: params.image.contentType,
+      latestMessage: params.message,
+      analyzer: async ({ filePath, contentType, latestMessage }) =>
+        analyzeUploadedImageViaGateway({
+          agentId: kid.agentId,
+          filePath,
+          contentType,
+          latestMessage,
+          kidName: kid.name,
+        }),
+    });
+
+    userMessage.attachments = uploadedAttachments.map((attachment) =>
+      attachment.kind === 'image_input'
+        ? {
+            ...attachment,
+            analysis,
+          }
+        : attachment,
+    );
+
+    nextStoredMessages[nextStoredMessages.length - 1] = userMessage;
+    multimodalContext = buildImageUnderstandingPrompt({
+      kidName: kid.name,
+      latestMessage: params.message,
+      analysis,
+    });
+  }
+
+  if (multimodalPlan.intent === 'image_generation') {
+    const generation = await generateImage({
+      prompt: multimodalPlan.imageGenerationPrompt || params.message,
+    });
+
+    const savedImages = await Promise.all(
+      generation.images.map((imageUrl) =>
+        saveGeneratedChatImage({
+          kidId: params.kidId,
+          chatId: params.chatId,
+          imageUrl,
+        }),
+      ),
+    );
+
+    const language = detectReplyLanguage(params.message);
+    const assistantStoredMessage: ChatMessage = {
+      id: `assistant-${Date.now()}`,
+      role: 'assistant',
+      content: buildImageGenerationReplyText(language, multimodalPlan.imageGenerationPrompt || params.message, generation.description),
+      createdAt: nowIso(),
+      attachments: savedImages.map((image) => ({
+        kind: 'image_generated' as const,
+        url: image.publicUrl,
+        contentType: image.contentType,
+        source: 'generated' as const,
+        prompt: multimodalPlan.imageGenerationPrompt || params.message,
+        revisedPrompt: generation.revisedPrompt,
+        generationStatus: 'completed' as const,
+        provider: generation.provider,
+        model: generation.model,
+      })),
+    };
+
+    await saveChatMessages(params.kidId, params.chatId, [...nextStoredMessages, assistantStoredMessage]);
+    const existing = index.chats.find((chat) => chat.id === params.chatId);
+    if (existing) {
+      existing.updatedAt = assistantStoredMessage.createdAt;
+      if (existing.title === '新的聊天') {
+        existing.title = buildTaskLabel('image_generation', multimodalPlan.imageGenerationPrompt || params.message);
+      }
+    } else {
+      index.chats.push({
+        id: params.chatId,
+        title: buildTaskLabel('image_generation', multimodalPlan.imageGenerationPrompt || params.message),
+        createdAt: assistantStoredMessage.createdAt,
+        updatedAt: assistantStoredMessage.createdAt,
+      });
+    }
+    await saveKidIndex(params.kidId, index);
+    return {
+      ...assistantStoredMessage,
+      createdAt: toMessageTime(assistantStoredMessage.createdAt),
+    };
+  }
+
+  if (multimodalPlan.intent === 'image_edit') {
+    const generation = await generateImage({
+      prompt: multimodalPlan.imageGenerationPrompt || params.message,
+      referenceImages: params.image
+        ? [{
+            filePath: params.image.filePath,
+            url: params.image.url,
+            contentType: params.image.contentType,
+          }]
+        : undefined,
+    });
+
+    const savedImages = await Promise.all(
+      generation.images.map((imageUrl) =>
+        saveGeneratedChatImage({
+          kidId: params.kidId,
+          chatId: params.chatId,
+          imageUrl,
+        }),
+      ),
+    );
+
+    const language = detectReplyLanguage(params.message);
+    const assistantStoredMessage: ChatMessage = {
+      id: `assistant-${Date.now()}`,
+      role: 'assistant',
+      content: buildImageGenerationReplyText(language, multimodalPlan.imageGenerationPrompt || params.message, generation.description),
+      createdAt: nowIso(),
+      attachments: [
+        ...(params.image
+          ? [{
+              kind: 'image_input' as const,
+              url: params.image.url,
+              contentType: params.image.contentType,
+              source: 'reference' as const,
+              prompt: params.message || undefined,
+            }]
+          : []),
+        ...savedImages.map((image) => ({
+          kind: 'image_generated' as const,
+          url: image.publicUrl,
+          contentType: image.contentType,
+          source: 'generated' as const,
+          prompt: multimodalPlan.imageGenerationPrompt || params.message,
+          revisedPrompt: generation.revisedPrompt,
+          generationStatus: 'completed' as const,
+          provider: generation.provider,
+          model: generation.model,
+        })),
+      ],
+    };
+
+    await saveChatMessages(params.kidId, params.chatId, [...nextStoredMessages, assistantStoredMessage]);
+    const existing = index.chats.find((chat) => chat.id === params.chatId);
+    if (existing) {
+      existing.updatedAt = assistantStoredMessage.createdAt;
+      if (existing.title === '新的聊天') {
+        existing.title = buildTaskLabel('image_edit', multimodalPlan.imageGenerationPrompt || params.message);
+      }
+    } else {
+      index.chats.push({
+        id: params.chatId,
+        title: buildTaskLabel('image_edit', multimodalPlan.imageGenerationPrompt || params.message),
+        createdAt: assistantStoredMessage.createdAt,
+        updatedAt: assistantStoredMessage.createdAt,
+      });
+    }
+    await saveKidIndex(params.kidId, index);
+    return {
+      ...assistantStoredMessage,
+      createdAt: toMessageTime(assistantStoredMessage.createdAt),
+    };
+  }
+
   const prompt = buildPrompt({
     kidName: kid.name,
     profileMemory,
     history: nextStoredMessages,
     latestMessage: params.message,
+    multimodalContext,
   });
 
   const assistantText = await runOpenClawAgent(kid.agentId, prompt);
+  const inlineImageGeneration = extractInlineImageGenerationPrompt(assistantText);
+
+  if (inlineImageGeneration.prompt) {
+    if (!capabilities.imageGeneration) {
+      throw new AppError('这个聊天入口暂时不支持生成图片。', 403);
+    }
+
+    const generation = await generateImage({
+      prompt: inlineImageGeneration.prompt,
+    });
+
+    const savedImages = await Promise.all(
+      generation.images.map((imageUrl) =>
+        saveGeneratedChatImage({
+          kidId: params.kidId,
+          chatId: params.chatId,
+          imageUrl,
+        }),
+      ),
+    );
+
+    const language = detectReplyLanguage(params.message);
+    const assistantStoredMessage: ChatMessage = {
+      id: `assistant-${Date.now()}`,
+      role: 'assistant',
+      content:
+        inlineImageGeneration.cleanedText ||
+        buildImageGenerationReplyText(language, inlineImageGeneration.prompt, generation.description),
+      createdAt: nowIso(),
+      attachments: savedImages.map((image) => ({
+        kind: 'image_generated' as const,
+        url: image.publicUrl,
+        contentType: image.contentType,
+        source: 'generated' as const,
+        prompt: inlineImageGeneration.prompt,
+        revisedPrompt: generation.revisedPrompt,
+        generationStatus: 'completed' as const,
+        provider: generation.provider,
+        model: generation.model,
+      })),
+    };
+
+    await saveChatMessages(params.kidId, params.chatId, [...nextStoredMessages, assistantStoredMessage]);
+    return {
+      ...assistantStoredMessage,
+      createdAt: toMessageTime(assistantStoredMessage.createdAt),
+    };
+  }
 
   const assistantStoredMessage: ChatMessage = {
     id: `assistant-${Date.now()}`,
@@ -360,6 +726,8 @@ export async function sendMessageToKidChat(params: {
   };
 
   await saveChatMessages(params.kidId, params.chatId, [...nextStoredMessages, assistantStoredMessage]);
+
+  const titleMode = multimodalPlan.intent === 'image_understanding' ? 'image_understanding' : 'chat';
 
   void (async () => {
     await markMessageForMemoryThrottle(params.kidId);
@@ -381,12 +749,12 @@ export async function sendMessageToKidChat(params: {
   if (existing) {
     existing.updatedAt = assistantStoredMessage.createdAt;
     if (existing.title === '新的聊天' && params.message.trim()) {
-      existing.title = makeChatTitle(params.message);
+      existing.title = buildTaskLabel(titleMode, params.message);
     }
   } else {
     index.chats.push({
       id: params.chatId,
-      title: makeChatTitle(params.message),
+      title: buildTaskLabel(titleMode, params.message),
       createdAt: assistantStoredMessage.createdAt,
       updatedAt: assistantStoredMessage.createdAt,
     });
