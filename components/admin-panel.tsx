@@ -70,6 +70,8 @@ type EnvValues = {
   adminPin: string;
   useMock: string;
   pm2Name: string;
+  imageProvider: 'media-agent' | 'gemini-direct' | 'inference-sh';
+  imageModel: string;
 };
 
 type KidMediaStorageStat = {
@@ -290,6 +292,10 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
   );
   const [profileForm, setProfileForm] = useState<ProfileFormState>(emptyProfileForm);
   const [status, setStatus] = useState('');
+  const [mediaSmokePreviewUrl, setMediaSmokePreviewUrl] = useState('');
+  const [mediaSmokePreviewAlt, setMediaSmokePreviewAlt] = useState('');
+  const [geminiSmokePreviewUrl, setGeminiSmokePreviewUrl] = useState('');
+  const [geminiSmokePreviewAlt, setGeminiSmokePreviewAlt] = useState('');
   const [kidContent, setKidContent] = useState<Record<string, { memory: string; profile: string }>>(
     () =>
       Object.fromEntries(
@@ -492,15 +498,22 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
   async function onRunMediaSmokeTest() {
     setMediaSmokeTesting(true);
     setStatus('');
+    setMediaSmokePreviewUrl('');
+    setMediaSmokePreviewAlt('');
 
     try {
       const response = await fetch('/api/runtime-check-image-media', { method: 'POST' });
       const data = await response.json();
       if (!response.ok) {
-        throw new Error(data.error || '智媒 smoke test 失败');
+        const debug = data.debug ? `\n\n调试信息：${JSON.stringify(data.debug)}` : '';
+        throw new Error((data.error || '智媒 smoke test 失败') + debug);
       }
       const debug = data.debug ? `\n\n调试信息：${JSON.stringify(data.debug)}` : '';
       setStatus((data.message || '智媒 smoke test 成功。') + debug);
+      if (typeof data.firstImagePreview === 'string' && data.firstImagePreview.trim()) {
+        setMediaSmokePreviewUrl(data.firstImagePreview);
+        setMediaSmokePreviewAlt(typeof data.prompt === 'string' && data.prompt.trim() ? data.prompt : '智媒 smoke test 预览图');
+      }
     } catch (error) {
       setStatus(error instanceof Error ? error.message : '智媒 smoke test 失败');
     } finally {
@@ -511,6 +524,8 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
   async function onRunGeminiSmokeTest() {
     setGeminiSmokeTesting(true);
     setStatus('');
+    setGeminiSmokePreviewUrl('');
+    setGeminiSmokePreviewAlt('');
 
     try {
       const response = await fetch('/api/runtime-check-image-gemini', { method: 'POST' });
@@ -520,6 +535,10 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
       }
       const debug = data.debug ? `\n\n调试信息：${JSON.stringify(data.debug)}` : '';
       setStatus((data.message || 'Gemini direct smoke test 成功。') + debug);
+      if (typeof data.firstImagePreview === 'string' && data.firstImagePreview.trim()) {
+        setGeminiSmokePreviewUrl(data.firstImagePreview);
+        setGeminiSmokePreviewAlt(typeof data.prompt === 'string' && data.prompt.trim() ? data.prompt : 'Gemini direct smoke test 预览图');
+      }
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Gemini direct smoke test 失败');
     } finally {
@@ -887,6 +906,32 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
                 {imageSmokeTesting ? '测试中…' : '运行整链 smoke test'}
               </button>
             </div>
+            {mediaSmokePreviewUrl ? (
+              <div className="runtime-check-card" style={{ marginTop: 12 }}>
+                <div className="runtime-check-header">
+                  <strong>智媒 smoke test 预览图</strong>
+                  <a href={mediaSmokePreviewUrl} target="_blank" rel="noreferrer">打开图片</a>
+                </div>
+                <img
+                  src={mediaSmokePreviewUrl}
+                  alt={mediaSmokePreviewAlt || '智媒 smoke test 预览图'}
+                  style={{ width: '100%', maxWidth: 320, height: 'auto', borderRadius: 12, border: '1px solid #e5e7eb', background: '#fff' }}
+                />
+              </div>
+            ) : null}
+            {geminiSmokePreviewUrl ? (
+              <div className="runtime-check-card" style={{ marginTop: 12 }}>
+                <div className="runtime-check-header">
+                  <strong>Gemini direct smoke test 预览图</strong>
+                  <a href={geminiSmokePreviewUrl} target="_blank" rel="noreferrer">打开图片</a>
+                </div>
+                <img
+                  src={geminiSmokePreviewUrl}
+                  alt={geminiSmokePreviewAlt || 'Gemini direct smoke test 预览图'}
+                  style={{ width: '100%', maxWidth: 320, height: 'auto', borderRadius: 12, border: '1px solid #e5e7eb', background: '#fff' }}
+                />
+              </div>
+            ) : null}
             {props.runtimeCheck.imageGeneration.issues.length ? (
               <ul>
                 {props.runtimeCheck.imageGeneration.issues.map((issue) => (
@@ -1039,7 +1084,7 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
                 <strong>重要：</strong>
                 <span>保存只会写入 <code>.env.local</code>。必须再点击“重启服务”，新的 PIN 才会真正生效。</span>
               </div>
-              <p className="env-admin-note">在这里可以直接修改所有 PIN 和运行模式设置。</p>
+              <p className="env-admin-note">在这里可以直接修改所有 PIN、运行模式，以及聊天正式链路使用的图片后端。</p>
 
               {props.kids.map((kid) => (
                 <label key={kid.id} className="env-field">
@@ -1085,6 +1130,32 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
                   placeholder="例如 kid-chat-mvp"
                 />
               </label>
+
+              <div className="env-fieldset">
+                <div className="env-fieldset-title">聊天图片后端</div>
+                <div className="env-admin-note">这里控制孩子聊天里正式使用哪条图片生成链路；保存后需要点击“重启服务”才会生效。</div>
+                <label className="env-field">
+                  <span>KID_CHAT_IMAGE_PROVIDER</span>
+                  <select
+                    value={envValues.imageProvider}
+                    onChange={(event) => setEnvValues((prev) => ({ ...prev, imageProvider: event.target.value as EnvValues['imageProvider'] }))}
+                  >
+                    <option value="media-agent">media-agent（智媒）</option>
+                    <option value="gemini-direct">gemini-direct（Google API 直连）</option>
+                    <option value="inference-sh">inference-sh</option>
+                  </select>
+                </label>
+                <label className="env-field">
+                  <span>KID_CHAT_IMAGE_MODEL</span>
+                  <input
+                    type="text"
+                    value={envValues.imageModel}
+                    onChange={(event) => setEnvValues((prev) => ({ ...prev, imageModel: event.target.value }))}
+                    placeholder={envValues.imageProvider === 'gemini-direct' ? '例如 gemini-3.1-flash-image-preview' : envValues.imageProvider === 'inference-sh' ? '例如 gemini-3.1-flash-image-preview' : 'media-agent 模式可留空或作运行时参考'}
+                  />
+                </label>
+                <div className="env-admin-note">当前已选：<strong>{envValues.imageProvider}</strong>{envValues.imageModel ? ` / ${envValues.imageModel}` : ''}</div>
+              </div>
             </div>
           ) : activeTab === 'text' ? (
             <div className="env-admin-form">

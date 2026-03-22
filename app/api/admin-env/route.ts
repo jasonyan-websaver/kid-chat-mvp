@@ -25,9 +25,11 @@ export async function POST(request: NextRequest) {
       adminPin?: string;
       useMock?: string;
       pm2Name?: string;
+      imageProvider?: string;
+      imageModel?: string;
     };
 
-    if (!body.kidPins || typeof body.adminPin !== 'string' || typeof body.useMock !== 'string' || typeof body.pm2Name !== 'string') {
+    if (!body.kidPins || typeof body.adminPin !== 'string' || typeof body.useMock !== 'string' || typeof body.pm2Name !== 'string' || typeof body.imageProvider !== 'string' || typeof body.imageModel !== 'string') {
       return NextResponse.json({ error: 'Invalid request payload' }, { status: 400 });
     }
 
@@ -36,6 +38,8 @@ export async function POST(request: NextRequest) {
       adminPin: body.adminPin,
       useMock: body.useMock,
       pm2Name: body.pm2Name,
+      imageProvider: body.imageProvider,
+      imageModel: body.imageModel,
     });
 
     await writeAdminEnvValues(validated);

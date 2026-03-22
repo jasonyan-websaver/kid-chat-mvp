@@ -24,7 +24,7 @@ function parseEnv(content: string) {
 
 function serializeEnv(values: Record<string, string>) {
   const kidPinKeys = getAllKidIds().map((id) => `KID_CHAT_PIN_${id.toUpperCase()}`);
-  const orderedKeys = [...kidPinKeys, 'KID_CHAT_ADMIN_PIN', 'OPENCLAW_USE_MOCK', 'KID_CHAT_PM2_NAME'];
+  const orderedKeys = [...kidPinKeys, 'KID_CHAT_ADMIN_PIN', 'OPENCLAW_USE_MOCK', 'KID_CHAT_PM2_NAME', 'KID_CHAT_IMAGE_PROVIDER', 'KID_CHAT_IMAGE_MODEL'];
 
   const lines = orderedKeys
     .filter((key) => key in values)
@@ -38,6 +38,8 @@ export type AdminEnvValues = {
   adminPin: string;
   useMock: string;
   pm2Name: string;
+  imageProvider: 'media-agent' | 'gemini-direct' | 'inference-sh';
+  imageModel: string;
 };
 
 export async function readAdminEnvValues(): Promise<AdminEnvValues> {
@@ -53,11 +55,14 @@ export async function readAdminEnvValues(): Promise<AdminEnvValues> {
     getAllKidIds().map((id) => [id, parsed[`KID_CHAT_PIN_${id.toUpperCase()}`] || '']),
   );
 
+  const imageProvider = (parsed.KID_CHAT_IMAGE_PROVIDER || 'media-agent').trim().toLowerCase();
   return {
     kidPins,
     adminPin: parsed.KID_CHAT_ADMIN_PIN || '',
     useMock: parsed.OPENCLAW_USE_MOCK === 'true' ? 'true' : 'false',
     pm2Name: parsed.KID_CHAT_PM2_NAME || 'kid-chat-mvp',
+    imageProvider: imageProvider === 'gemini-direct' || imageProvider === 'inference-sh' ? imageProvider : 'media-agent',
+    imageModel: parsed.KID_CHAT_IMAGE_MODEL || '',
   };
 }
 
@@ -66,6 +71,8 @@ export async function writeAdminEnvValues(input: AdminEnvValues) {
     KID_CHAT_ADMIN_PIN: input.adminPin.trim(),
     OPENCLAW_USE_MOCK: input.useMock.trim() || 'false',
     KID_CHAT_PM2_NAME: input.pm2Name.trim() || 'kid-chat-mvp',
+    KID_CHAT_IMAGE_PROVIDER: input.imageProvider.trim() || 'media-agent',
+    KID_CHAT_IMAGE_MODEL: input.imageModel.trim(),
   };
 
   for (const id of getAllKidIds()) {

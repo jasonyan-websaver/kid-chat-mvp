@@ -7,8 +7,10 @@ backups
 
 tsconfig.tsbuildinfo
 public/chat-media/
+public/smoke-tests/
 data/memory-throttle/*.json
 data/smoke-tests/*.json
+data/image-upload-throttle/*.json
 
 data/chat-store/*
 !data/chat-store/.gitkeep

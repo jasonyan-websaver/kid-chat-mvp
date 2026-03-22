@@ -5,6 +5,8 @@ export type AdminEnvInput = {
   adminPin: string;
   useMock: string;
   pm2Name: string;
+  imageProvider: string;
+  imageModel: string;
 };
 
 function isDigitsOnly(value: string) {
@@ -18,6 +20,8 @@ export function validateAdminEnvInput(input: AdminEnvInput) {
   const adminPin = String(input.adminPin || '').trim();
   const useMock = String(input.useMock || '').trim();
   const pm2Name = String(input.pm2Name || '').trim();
+  const imageProvider = String(input.imageProvider || '').trim().toLowerCase();
+  const imageModel = String(input.imageModel || '').trim();
 
   for (const kidId of getAllKidIds()) {
     const pin = normalizedKidPins[kidId];
@@ -54,10 +58,20 @@ export function validateAdminEnvInput(input: AdminEnvInput) {
     throw new Error('PM2 服务名不能为空');
   }
 
+  if (!['media-agent', 'gemini-direct', 'inference-sh'].includes(imageProvider)) {
+    throw new Error('图片后端必须是 media-agent、gemini-direct 或 inference-sh');
+  }
+
+  if ((imageProvider === 'gemini-direct' || imageProvider === 'inference-sh') && !imageModel) {
+    throw new Error('Gemini direct / inference.sh 模式下必须填写图片模型名');
+  }
+
   return {
     kidPins: normalizedKidPins,
     adminPin,
     useMock,
     pm2Name,
+    imageProvider: imageProvider as 'media-agent' | 'gemini-direct' | 'inference-sh',
+    imageModel,
   };
 }

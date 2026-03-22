@@ -4,6 +4,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { getConfiguredKidById } from './kid-settings';
 import { AppError } from './app-error';
+import { getErrorSummary, logError, logInfo, maskIdentifier, summarizeText } from './observability';
 import { normalizeKnownChatId, normalizeKnownKidId } from './storage-ids';
 import { ChatAttachment, ChatMessage, ChatSummary, getMessageAttachments } from './types';
 import {
@@ -399,6 +400,7 @@ export async function sendMessageToKidChat(params: {
   message: string;
   mode?: 'chat' | 'image_generation' | 'image_understanding' | 'image_edit';
   image?: { url: string; filePath: string; contentType?: string };
+  requestId?: string;
 }): Promise<ChatMessage> {
   if (!params.message.trim() && !params.image) {
     throw new AppError('消息内容不能为空。', 400);
@@ -475,6 +477,21 @@ export async function sendMessageToKidChat(params: {
     imageEdit: false,
   };
 
+  logInfo('kid_chat.message.start', {
+    requestId: params.requestId,
+    kidId: maskIdentifier(params.kidId),
+    chatId: maskIdentifier(params.chatId),
+    requestedMode: params.mode || 'auto',
+    resolvedIntent: multimodalPlan.intent,
+    hasImage: Boolean(params.image),
+    imageContentType: params.image?.contentType || null,
+    imageFilePath: params.image?.filePath || null,
+    imageUrl: params.image?.url || null,
+    messagePreview: summarizeText(params.message, 120),
+    capabilities,
+    agentId: kid.agentId,
+  });
+
   let multimodalContext = '';
   if (multimodalPlan.intent === 'image_understanding') {
     if (!capabilities.imageUnderstanding) {
@@ -499,35 +516,67 @@ export async function sendMessageToKidChat(params: {
   }
 
   if (multimodalPlan.intent === 'image_understanding' && params.image) {
-    const analysis = await analyzeUploadedImageForMvp({
-      filePath: params.image.filePath,
-      contentType: params.image.contentType,
-      latestMessage: params.message,
-      analyzer: async ({ filePath, contentType, latestMessage }) =>
-        analyzeUploadedImageViaGateway({
-          agentId: kid.agentId,
-          filePath,
-          contentType,
-          latestMessage,
-          kidName: kid.name,
-        }),
-    });
+    try {
+      logInfo('kid_chat.image_understanding.start', {
+        requestId: params.requestId,
+        kidId: maskIdentifier(params.kidId),
+        chatId: maskIdentifier(params.chatId),
+        agentId: kid.agentId,
+        imageContentType: params.image.contentType || 'application/octet-stream',
+        imageFilePath: params.image.filePath,
+        latestMessagePreview: summarizeText(params.message, 120),
+      });
 
-    userMessage.attachments = uploadedAttachments.map((attachment) =>
-      attachment.kind === 'image_input'
-        ? {
-            ...attachment,
-            analysis,
-          }
-        : attachment,
-    );
+      const analysis = await analyzeUploadedImageForMvp({
+        filePath: params.image.filePath,
+        contentType: params.image.contentType,
+        latestMessage: params.message,
+        analyzer: async ({ filePath, contentType, latestMessage }) =>
+          analyzeUploadedImageViaGateway({
+            agentId: kid.agentId,
+            filePath,
+            contentType,
+            latestMessage,
+            kidName: kid.name,
+            requestId: params.requestId,
+          }),
+      });
 
-    nextStoredMessages[nextStoredMessages.length - 1] = userMessage;
-    multimodalContext = buildImageUnderstandingPrompt({
-      kidName: kid.name,
-      latestMessage: params.message,
-      analysis,
-    });
+      logInfo('kid_chat.image_understanding.success', {
+        requestId: params.requestId,
+        kidId: maskIdentifier(params.kidId),
+        chatId: maskIdentifier(params.chatId),
+        confidence: analysis.confidence,
+        objectCount: analysis.objects?.length || 0,
+        visibleTextCount: analysis.visibleText?.length || 0,
+        summaryPreview: summarizeText(analysis.summary, 160),
+      });
+
+      userMessage.attachments = uploadedAttachments.map((attachment) =>
+        attachment.kind === 'image_input'
+          ? {
+              ...attachment,
+              analysis,
+            }
+          : attachment,
+      );
+
+      nextStoredMessages[nextStoredMessages.length - 1] = userMessage;
+      multimodalContext = buildImageUnderstandingPrompt({
+        kidName: kid.name,
+        latestMessage: params.message,
+        analysis,
+      });
+    } catch (error) {
+      logError('kid_chat.image_understanding.failed', {
+        requestId: params.requestId,
+        kidId: maskIdentifier(params.kidId),
+        chatId: maskIdentifier(params.chatId),
+        agentId: kid.agentId,
+        error: getErrorSummary(error),
+      });
+      throw error;
+    }
   }
 
   if (multimodalPlan.intent === 'image_generation') {

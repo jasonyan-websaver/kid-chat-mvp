@@ -1,5 +1,6 @@
 import { promises as fs } from 'fs';
 import { AppError } from './app-error';
+import { getErrorSummary, logError, logInfo, summarizeText } from './observability';
 import type { ImageAttachmentAnalysis } from './types';
 
 const DEFAULT_GATEWAY_URL = 'http://127.0.0.1:18789';
@@ -66,7 +67,9 @@ export async function analyzeUploadedImageViaGateway(params: {
   contentType?: string;
   latestMessage: string;
   kidName: string;
+  requestId?: string;
 }): Promise<ImageAttachmentAnalysis> {
+  const startedAt = Date.now();
   const token = await readGatewayToken();
   const imageBuffer = await fs.readFile(params.filePath);
   const mimeType = params.contentType || 'image/jpeg';
@@ -91,47 +94,113 @@ export async function analyzeUploadedImageViaGateway(params: {
     `Child message: ${params.latestMessage || '(none)'}`,
   ].join('\n');
 
-  const response = await fetch(`${gatewayUrl}/v1/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-      'x-openclaw-agent-id': params.agentId,
-      'x-openclaw-session-key': `agent:${params.agentId}:kid-chat-vision`,
-    },
-    body: JSON.stringify({
-      model: `openclaw:${params.agentId}`,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: instruction },
-            { type: 'image_url', image_url: { url: dataUrl } },
-          ],
-        },
-      ],
-      stream: false,
-      user: `kid-chat-vision-${params.agentId}`,
-    }),
+  logInfo('gateway.image_understanding.request', {
+    requestId: params.requestId,
+    agentId: params.agentId,
+    gatewayUrl,
+    mimeType,
+    imageBytes: imageBuffer.byteLength,
+    latestMessagePreview: summarizeText(params.latestMessage, 120),
+    model: `openclaw:${params.agentId}`,
   });
+
+  let response: Response;
+  try {
+    response = await fetch(`${gatewayUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        'x-openclaw-agent-id': params.agentId,
+        'x-openclaw-session-key': `agent:${params.agentId}:kid-chat-vision`,
+      },
+      body: JSON.stringify({
+        model: `openclaw:${params.agentId}`,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: instruction },
+              { type: 'image_url', image_url: { url: dataUrl } },
+            ],
+          },
+        ],
+        stream: false,
+        user: `kid-chat-vision-${params.agentId}`,
+      }),
+    });
+  } catch (error) {
+    logError('gateway.image_understanding.network_error', {
+      requestId: params.requestId,
+      agentId: params.agentId,
+      elapsedMs: Date.now() - startedAt,
+      error: getErrorSummary(error),
+    });
+    throw new AppError('图片理解服务暂时不可达，请稍后重试。', 502, {
+      code: 'IMAGE_UNDERSTANDING_GATEWAY_UNREACHABLE',
+      details: {
+        agentId: params.agentId,
+        gatewayUrl,
+      },
+      cause: error,
+    });
+  }
 
   const raw = await response.text();
   if (!response.ok) {
-    throw new AppError(`真实图片理解调用失败：${raw || `HTTP ${response.status}`}`, 502);
+    logError('gateway.image_understanding.bad_response', {
+      requestId: params.requestId,
+      agentId: params.agentId,
+      elapsedMs: Date.now() - startedAt,
+      httpStatus: response.status,
+      responsePreview: summarizeText(raw, 300),
+    });
+
+    const status = response.status === 401 || response.status === 403 || response.status === 429
+      ? response.status
+      : response.status >= 500
+        ? 502
+        : 502;
+
+    throw new AppError(`真实图片理解调用失败：${raw || `HTTP ${response.status}`}`, status, {
+      code: 'IMAGE_UNDERSTANDING_UPSTREAM_ERROR',
+      details: {
+        agentId: params.agentId,
+        upstreamStatus: response.status,
+      },
+    });
   }
 
   let parsedResponse: unknown;
   try {
     parsedResponse = JSON.parse(raw);
-  } catch {
-    throw new AppError('图片理解返回了无法解析的响应。', 502);
+  } catch (error) {
+    logError('gateway.image_understanding.invalid_json', {
+      requestId: params.requestId,
+      agentId: params.agentId,
+      elapsedMs: Date.now() - startedAt,
+      responsePreview: summarizeText(raw, 300),
+      error: getErrorSummary(error),
+    });
+    throw new AppError('图片理解返回了无法解析的响应。', 502, {
+      code: 'IMAGE_UNDERSTANDING_INVALID_RESPONSE',
+      cause: error,
+    });
   }
 
   const choice = (parsedResponse as { choices?: Array<{ message?: { content?: unknown } }> }).choices?.[0];
   const text = stripFenceBlock(extractTextFromOpenAiContent(choice?.message?.content));
 
   if (!text) {
-    throw new AppError('图片理解返回了空结果。', 502);
+    logError('gateway.image_understanding.empty_result', {
+      requestId: params.requestId,
+      agentId: params.agentId,
+      elapsedMs: Date.now() - startedAt,
+      responsePreview: summarizeText(raw, 300),
+    });
+    throw new AppError('图片理解返回了空结果。', 502, {
+      code: 'IMAGE_UNDERSTANDING_EMPTY_RESULT',
+    });
   }
 
   try {
@@ -140,7 +209,7 @@ export async function analyzeUploadedImageViaGateway(params: {
       ? analysis.confidence
       : 'medium';
 
-    return {
+    const result: ImageAttachmentAnalysis = {
       summary: typeof analysis.summary === 'string' ? analysis.summary.trim() : 'Image uploaded.',
       visibleText: normalizeLineArray(analysis.visibleText),
       objects: normalizeLineArray(analysis.objects),
@@ -148,8 +217,20 @@ export async function analyzeUploadedImageViaGateway(params: {
       suggestedExplanation: typeof analysis.suggestedExplanation === 'string' ? analysis.suggestedExplanation.trim() : '',
       confidence,
     };
+
+    logInfo('gateway.image_understanding.success', {
+      requestId: params.requestId,
+      agentId: params.agentId,
+      elapsedMs: Date.now() - startedAt,
+      confidence: result.confidence,
+      objectCount: result.objects?.length || 0,
+      visibleTextCount: result.visibleText?.length || 0,
+      summaryPreview: summarizeText(result.summary, 160),
+    });
+
+    return result;
   } catch {
-    return {
+    const fallback: ImageAttachmentAnalysis = {
       summary: text,
       visibleText: [],
       objects: [],
@@ -157,5 +238,14 @@ export async function analyzeUploadedImageViaGateway(params: {
       suggestedExplanation: 'Explain the uploaded image simply and naturally based on the grounded analysis above.',
       confidence: 'medium',
     };
+
+    logInfo('gateway.image_understanding.non_json_text_fallback', {
+      requestId: params.requestId,
+      agentId: params.agentId,
+      elapsedMs: Date.now() - startedAt,
+      summaryPreview: summarizeText(text, 160),
+    });
+
+    return fallback;
   }
 }

@@ -6,6 +6,18 @@ import { getAdminAuthErrorResponse, requireAdminRequest, requireKnownKidId } fro
 
 const execFileAsync = promisify(execFile);
 
+function augmentAgentCheckError(message: string) {
+  if (
+    message.includes('Failed to inspect sandbox image') ||
+    message.includes('Cannot connect to the Docker daemon') ||
+    message.includes('docker.sock')
+  ) {
+    return `${message}\n提示：这个 agent 看起来启用了 sandbox。请先确认 Docker 已经在宿主机上启动，然后再重试。`;
+  }
+
+  return message;
+}
+
 export async function POST(request: NextRequest) {
   const authError = getAdminAuthErrorResponse(request);
   if (authError) return authError;
@@ -57,6 +69,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'agent 连通性测试超时，请检查 OpenClaw 或 agent 响应状态。' }, { status: 504 });
     }
 
-    return NextResponse.json({ error: `agent 连通性测试失败：${message}` }, { status: 502 });
+    return NextResponse.json({ error: `agent 连通性测试失败：${augmentAgentCheckError(message)}` }, { status: 502 });
   }
 }

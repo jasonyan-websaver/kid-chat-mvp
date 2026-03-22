@@ -520,6 +520,8 @@ openclaw agent --agent grace-v2 --message "hello" --json
 
 If the command fails, the web app will also fail in real mode when trying to send messages.
 
+> Important: if the linked agent is configured to use `sandbox`, Docker must be running on the host machine. Otherwise the agent can fail before replying with errors like `Failed to inspect sandbox image` or `Cannot connect to the Docker daemon`.
+
 ### Add the child's profile file
 
 Each child should have a matching profile file in:
@@ -690,6 +692,8 @@ Before using real mode, test the linked agent directly:
 ```bash
 openclaw agent --agent emma --message "hello" --json
 ```
+
+If Emma's agent uses `sandbox`, make sure Docker is running first. Otherwise the real-mode image understanding / agent call can fail before any model reply is produced.
 
 #### 6. Review hard-coded child lists
 

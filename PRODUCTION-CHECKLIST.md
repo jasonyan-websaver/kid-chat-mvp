@@ -35,6 +35,8 @@ openclaw agent --agent grace --message "hello" --json
 openclaw agent --agent george --message "hello" --json
 ```
 
+If any child agent uses `sandbox`, Docker must be running on the same host before these checks and before real-mode traffic. Otherwise the agent may fail before replying, with errors such as `Failed to inspect sandbox image` or `Cannot connect to the Docker daemon`.
+
 ---
 
 ## 2. Child workspace and file paths

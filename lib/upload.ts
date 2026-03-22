@@ -77,6 +77,9 @@ export async function saveGeneratedChatImage(params: {
     }
     contentType = match[1] || contentType;
     buffer = Buffer.from(match[2], 'base64');
+  } else if (path.isAbsolute(params.imageUrl)) {
+    buffer = await fs.readFile(params.imageUrl);
+    contentType = inferContentTypeFromUrl(params.imageUrl) || contentType;
   } else if (params.imageUrl.startsWith('/')) {
     const sourcePath = path.join(process.cwd(), 'public', params.imageUrl.replace(/^\//, ''));
     buffer = await fs.readFile(sourcePath);
