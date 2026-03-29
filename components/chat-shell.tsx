@@ -4,6 +4,9 @@ import Image from 'next/image';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import ReactMarkdown from 'react-markdown';
+import remarkBreaks from 'remark-breaks';
+import remarkGfm from 'remark-gfm';
 import { IMAGE_UPLOAD_ACCEPTED_TYPES, IMAGE_UPLOAD_MAX_BYTES, IMAGE_UPLOAD_MAX_HEIGHT, IMAGE_UPLOAD_MAX_PIXELS, IMAGE_UPLOAD_MAX_WIDTH, getAcceptedImageTypeLabel, formatBytesToMb } from '@/lib/image-upload-policy';
 import { ChatMessage, ChatSummary, KidProfile, getMessageAttachments } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -84,6 +87,23 @@ function getTtsSettingsForLanguage(lang: string) {
     return { lang, rate: 0.92, pitch: 1.02, volume: 1 };
   }
   return { lang, rate: 0.94, pitch: 1, volume: 1 };
+}
+
+function stripMarkdownForTts(text: string) {
+  return text
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/!\[([^\]]*)\]\([^\)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^\)]*\)/g, '$1')
+    .replace(/^\s{0,3}(#{1,6})\s+/gm, '')
+    .replace(/^\s{0,3}>\s?/gm, '')
+    .replace(/^\s*([-*+]|\d+\.)\s+/gm, '')
+    .replace(/(\*\*|__)(.*?)\1/g, '$2')
+    .replace(/(\*|_)(.*?)\1/g, '$2')
+    .replace(/~~(.*?)~~/g, '$1')
+    .replace(/\|/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 function readImageDimensions(file: File): Promise<{ width: number; height: number }> {
@@ -295,9 +315,10 @@ export function ChatShell(props: {
 
     window.speechSynthesis.cancel();
 
-    const detectedLang = detectTtsLanguage(message.content);
+    const ttsText = stripMarkdownForTts(message.content);
+    const detectedLang = detectTtsLanguage(ttsText);
     const settings = getTtsSettingsForLanguage(detectedLang);
-    const utterance = new SpeechSynthesisUtterance(message.content);
+    const utterance = new SpeechSynthesisUtterance(ttsText);
     const preferredVoice = pickPreferredVoice(ttsVoices, detectedLang, kid.tts?.preferredVoiceName);
 
     utterance.lang = settings.lang;
@@ -501,7 +522,7 @@ export function ChatShell(props: {
               </div>
               <div>
                 <h2>{activeChat?.title ?? '新对话'}</h2>
-                <p>{kid.welcome}</p>
+                <p className="chat-welcome-text">{kid.welcome}</p>
               </div>
             </div>
             <div className="chat-header-actions">
@@ -628,7 +649,15 @@ export function ChatShell(props: {
                         ))}
                       </div>
                     ) : null}
-                    <div>{message.content}</div>
+                    {message.role === 'assistant' ? (
+                      <div className="message-markdown">
+                        <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+                          {message.content}
+                        </ReactMarkdown>
+                      </div>
+                    ) : (
+                      <div className="message-plain-text">{message.content}</div>
+                    )}
                   </div>
                   {message.role === 'assistant' && ttsSupported && kid.tts?.enabled !== false ? (
                     <button

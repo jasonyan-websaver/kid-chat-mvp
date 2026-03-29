@@ -61,8 +61,25 @@ function toMessageTime(date: string) {
   }).format(new Date(date));
 }
 
+function stripMarkdownForPlainText(text: string) {
+  return text
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/!\[([^\]]*)\]\([^\)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^\)]*\)/g, '$1')
+    .replace(/^\s{0,3}(#{1,6})\s+/gm, '')
+    .replace(/^\s{0,3}>\s?/gm, '')
+    .replace(/^\s*([-*+]|\d+\.)\s+/gm, '')
+    .replace(/(\*\*|__)(.*?)\1/g, '$2')
+    .replace(/(\*|_)(.*?)\1/g, '$2')
+    .replace(/~~(.*?)~~/g, '$1')
+    .replace(/\|/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 function normalizeSnippet(text: string) {
-  return text.trim().replace(/\s+/g, ' ');
+  return stripMarkdownForPlainText(text).trim().replace(/\s+/g, ' ');
 }
 
 function detectReplyLanguage(text: string): 'zh' | 'fr' | 'en' {

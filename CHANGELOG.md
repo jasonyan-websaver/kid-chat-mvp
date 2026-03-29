@@ -2,6 +2,56 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.2.2 - 2026-03-28
+
+Markdown rendering and TTS cleanup update.
+
+### Fixed
+
+- assistant chat replies now render markdown instead of showing raw markdown symbols as plain text
+- browser TTS now strips markdown syntax before speaking so symbols like `**` are not read aloud
+- child/user messages remain plain text and no longer risk accidental markdown interpretation
+- chat list previews now normalize assistant markdown into plain text so sidebar snippets stay clean
+- welcome text now preserves natural line breaks while remaining plain text
+
+### Improved
+
+- single-line breaks in assistant replies now render more naturally in chat bubbles
+- chat bubble styling now better supports paragraphs, emphasis, lists, blockquotes, inline code, and code blocks
+- markdown handling is now more consistent across live replies, stored history, TTS playback, and sidebar previews
+
+### Notes
+
+This is a small polish release focused on making child chat replies display and sound natural after markdown-enabled assistant output was introduced.
+It does not expand product scope, but it noticeably improves everyday chat quality.
+
+## v0.2.1 - 2026-03-21
+
+Image-pipeline stabilization and release hardening update.
+
+### Fixed
+
+- stabilized the image-generation pipeline after the initial multimodal rollout
+- improved smoke-test diagnostics so admin failures expose more useful debug context instead of opaque empty-output failures
+- hardened smoke-test JSON extraction against wrapped OpenClaw output
+- fixed local preview handling for smoke-test images so generated previews render reliably in admin
+- fixed absolute-path handling when saving generated images into `public/chat-media/...`
+- fixed preview URL truncation that could cause smoke-test image 404s
+- corrected Gemini direct image generation configuration by aligning the model / endpoint usage
+- normalized `google/...` style model aliases before Google API calls
+
+### Improved
+
+- media-agent smoke tests now prefer a compact local-file-path result contract instead of oversized payloads
+- admin now shows preview images for both media-agent and Gemini direct smoke tests
+- admin exposes `KID_CHAT_IMAGE_PROVIDER` and `KID_CHAT_IMAGE_MODEL` controls so the formal chat image backend can be switched without hand-editing `.env.local`
+- release confidence improved through repeated rebuilds and end-to-end verification after image-pipeline fixes
+
+### Notes
+
+This release focuses on stabilizing the new image features introduced in v0.2.0 rather than expanding product scope.
+It keeps the family MVP on a safer operational baseline before the next feature cycle.
+
 ## v0.2.0 - 2026-03-20
 
 Multimodal and voice-focused update.

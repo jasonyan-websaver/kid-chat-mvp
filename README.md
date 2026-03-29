@@ -1,6 +1,6 @@
 # Kid Chat MVP
 
-**Version:** v0.2.0  
+**Version:** v0.2.2  
 **License:** MIT
 
 Kid Chat MVP is an open-source, family-oriented chat app designed for children and parents.
