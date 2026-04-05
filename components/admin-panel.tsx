@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import { useEffect, useMemo, useState } from 'react';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { formatBytesToMb, getAcceptedImageTypeLabel } from '@/lib/image-upload-policy';
@@ -912,9 +913,13 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
                   <strong>智媒 smoke test 预览图</strong>
                   <a href={mediaSmokePreviewUrl} target="_blank" rel="noreferrer">打开图片</a>
                 </div>
-                <img
+                <Image
                   src={mediaSmokePreviewUrl}
                   alt={mediaSmokePreviewAlt || '智媒 smoke test 预览图'}
+                  width={320}
+                  height={320}
+                  unoptimized
+                  sizes="(max-width: 640px) 100vw, 320px"
                   style={{ width: '100%', maxWidth: 320, height: 'auto', borderRadius: 12, border: '1px solid #e5e7eb', background: '#fff' }}
                 />
               </div>
@@ -925,9 +930,13 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
                   <strong>Gemini direct smoke test 预览图</strong>
                   <a href={geminiSmokePreviewUrl} target="_blank" rel="noreferrer">打开图片</a>
                 </div>
-                <img
+                <Image
                   src={geminiSmokePreviewUrl}
                   alt={geminiSmokePreviewAlt || 'Gemini direct smoke test 预览图'}
+                  width={320}
+                  height={320}
+                  unoptimized
+                  sizes="(max-width: 640px) 100vw, 320px"
                   style={{ width: '100%', maxWidth: 320, height: 'auto', borderRadius: 12, border: '1px solid #e5e7eb', background: '#fff' }}
                 />
               </div>
