@@ -360,14 +360,14 @@ Use this for:
 
 - live child agents
 - persistent local chat storage
-- profile-aware prompting
+- child-workspace-driven persona and memory
 - automatic memory extraction
 
 Behavior:
 
 - each child maps to a fixed `agentId`
 - recent conversation is packed into a prompt
-- child profile is injected
+- child workspace persona files remain the main source of identity and behavior
 - `openclaw agent` is called
 - messages are stored locally
 - memory extraction may run asynchronously
@@ -821,30 +821,26 @@ Use it for things the assistant learns over time, such as:
 
 In short:
 
-- `profile.json` = configured by parent
+- `profile.json` = configured by parent for product/admin settings
+- child workspace files = primary persona source
 - `MEMORY.md` = accumulated by agent
 
 ---
 
 ## Profile JSON Shape
 
-Supported fields in `data/profiles/*.json`:
+`data/profiles/*.json` should be treated as parent-controlled product configuration.
+Typical fields may include child-facing metadata, learning preferences, or admin-managed settings.
 
-```json
-{
-  "name": "Grace",
-  "ageGroup": "early-elementary",
-  "languages": ["French", "Chinese"],
-  "likes": ["princess stories", "animals"],
-  "learningGoals": ["confidence in French", "maintain comfort with Chinese", "curiosity"],
-  "tone": "warm and encouraging",
-  "responseStyle": ["short answers", "gentle guidance"],
-  "avoid": ["scary details", "overly complex explanations"],
-  "notes": ["loves pink themes", "enjoys bedtime stories"]
-}
-```
+If a field is a stable part of the child assistant's identity or teaching style, it should also exist in the child workspace files rather than relying on prompt injection alone.
 
-These fields are formatted and injected into prompts by `lib/profiles.ts`.
+Recommended split:
+
+- keep stable child identity, language background, teaching style, and long-term preferences in workspace files
+- keep admin settings, feature flags, modes, and parent controls in `data/profiles/*.json`
+- avoid depending on full profile JSON injection in the main chat prompt
+
+See also: `data/profiles/README.md` and `KID-CHAT-ISOLATION-ARCHITECTURE.md`.
 
 ---
 

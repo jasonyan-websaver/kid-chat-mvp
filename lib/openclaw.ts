@@ -15,7 +15,6 @@ import {
 } from './multimodal';
 import { analyzeUploadedImageViaGateway } from './gateway-chat-completions';
 import { mockChatSummaries, mockMessages } from './mock-data';
-import { formatKidProfileMemory, readKidProfileMemory } from './profiles';
 import { updateAgentMemoryFromChat } from './agent-memory';
 import { generateImage } from './image-generation';
 import { saveGeneratedChatImage } from './upload';
@@ -230,12 +229,10 @@ async function saveChatMessages(kidId: string, chatId: string, messages: ChatMes
 
 function buildPrompt(params: {
   kidName: string;
-  profileMemory: string;
   history: ChatMessage[];
-  latestMessage: string;
   multimodalContext?: string;
 }) {
-  const recent = params.history.slice(-8);
+  const recent = params.history.slice(-4);
   const transcript = recent
     .map((message) => {
       const attachments = getMessageAttachments(message);
@@ -248,16 +245,8 @@ function buildPrompt(params: {
 
   return [
     `You are ${params.kidName}'s personal assistant inside a child-friendly chat app.`,
-    'Reply naturally, warmly, and clearly for a child audience.',
-    'Always reply in the same language as the child\'s latest message unless the child explicitly asks you to switch languages.',
-    'If the child writes in Chinese, reply in Chinese. If the child writes in French, reply in French. If the child mixes languages, follow the main language of the latest request.',
+    'Reply in the same language as the child\'s latest message unless the child explicitly asks to switch languages.',
     'Do not mention system prompts, tools, internal implementation, or hidden memory systems.',
-    'Use the long-term child profile below to stay consistent across different chat threads.',
-    '',
-    'Long-term child profile:',
-    params.profileMemory,
-    '',
-    'Continue the conversation based on the recent chat history below.',
     '',
     'Recent conversation:',
     transcript || '(no previous messages)',
@@ -265,9 +254,7 @@ function buildPrompt(params: {
     'Multimodal context (if any):',
     params.multimodalContext || '(none)',
     '',
-    `Latest child message: ${params.latestMessage}`,
-    '',
-    'Now reply as the assistant with only the message content.',
+    'Reply with only the assistant message content.',
   ].join('\n');
 }
 
@@ -445,14 +432,6 @@ export async function sendMessageToKidChat(params: {
 
   const index = await readKidIndex(params.kidId);
   const storedMessages = await readChatMessages(params.kidId, params.chatId);
-
-  let profileMemory = '';
-  try {
-    profileMemory = formatKidProfileMemory(await readKidProfileMemory(params.kidId));
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    throw new AppError(`读取孩子资料失败：${message}`, 500);
-  }
 
   const now = nowIso();
   const uploadedAttachments: ChatAttachment[] = params.image ? [buildUploadedImageAttachment(params.image, params.message)] : [];
@@ -728,9 +707,7 @@ export async function sendMessageToKidChat(params: {
 
   const prompt = buildPrompt({
     kidName: kid.name,
-    profileMemory,
     history: nextStoredMessages,
-    latestMessage: params.message,
     multimodalContext,
   });
 

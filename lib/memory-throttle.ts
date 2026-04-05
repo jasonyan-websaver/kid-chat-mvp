@@ -2,8 +2,8 @@ import { promises as fs } from 'fs';
 import path from 'path';
 
 const throttleDir = path.join(process.cwd(), 'data', 'memory-throttle');
-const MIN_MESSAGES_BETWEEN_EXTRACTIONS = 4;
-const MIN_MS_BETWEEN_EXTRACTIONS = 1000 * 60 * 20;
+const MIN_MESSAGES_BETWEEN_EXTRACTIONS = 8;
+const MIN_MS_BETWEEN_EXTRACTIONS = 1000 * 60 * 120;
 
 type ThrottleState = {
   lastExtractionAt?: string;
