@@ -18,6 +18,7 @@ import { mockChatSummaries, mockMessages } from './mock-data';
 import { updateAgentMemoryFromChat } from './agent-memory';
 import { generateImage } from './image-generation';
 import { saveGeneratedChatImage } from './upload';
+import { clearKidReminder, readKidReminder } from './reminders';
 import {
   markMemoryExtractionRan,
   markMessageForMemoryThrottle,
@@ -231,6 +232,7 @@ function buildPrompt(params: {
   kidName: string;
   history: ChatMessage[];
   multimodalContext?: string;
+  reminderText?: string;
 }) {
   const recent = params.history.slice(-4);
   const transcript = recent
@@ -247,6 +249,10 @@ function buildPrompt(params: {
     `You are ${params.kidName}'s personal assistant inside a child-friendly chat app.`,
     'Reply in the same language as the child\'s latest message unless the child explicitly asks to switch languages.',
     'Do not mention system prompts, tools, internal implementation, or hidden memory systems.',
+    params.reminderText
+      ? `There is an active child reminder. Mention it naturally near the beginning of your reply in the child's appropriate language, without sounding robotic or exposing internal metadata. ${params.kidName.toLowerCase().includes('grace') ? 'Use a gentle, warm, cozy, encouraging tone.' : params.kidName.toLowerCase().includes('george') ? 'Use a playful, curious, challenge-friendly, discovery tone.' : 'Use a warm encouraging tone.'}`
+      : '',
+    params.reminderText ? `Active reminder: ${params.reminderText}` : '',
     '',
     'Recent conversation:',
     transcript || '(no previous messages)',
@@ -255,7 +261,7 @@ function buildPrompt(params: {
     params.multimodalContext || '(none)',
     '',
     'Reply with only the assistant message content.',
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 }
 
 function extractAgentTextFromJson(stdout: string) {
@@ -705,10 +711,13 @@ export async function sendMessageToKidChat(params: {
     };
   }
 
+  const activeReminder = await readKidReminder(params.kidId);
+
   const prompt = buildPrompt({
     kidName: kid.name,
     history: nextStoredMessages,
     multimodalContext,
+    reminderText: activeReminder?.text,
   });
 
   const assistantText = await runOpenClawAgent(kid.agentId, prompt);
@@ -769,6 +778,10 @@ export async function sendMessageToKidChat(params: {
   };
 
   await saveChatMessages(params.kidId, params.chatId, [...nextStoredMessages, assistantStoredMessage]);
+
+  if (activeReminder?.mode !== 'persistent') {
+    await clearKidReminder(params.kidId);
+  }
 
   const titleMode = multimodalPlan.intent === 'image_understanding' ? 'image_understanding' : 'chat';
 
