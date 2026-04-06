@@ -4,9 +4,8 @@ import Image from 'next/image';
 import { useEffect, useMemo, useState } from 'react';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { formatBytesToMb, getAcceptedImageTypeLabel } from '@/lib/image-upload-policy';
-import { getUnknownProfileKeysFromJson } from '@/lib/profile-schema';
 
-type TabKey = 'memory' | 'profile' | 'env' | 'text' | 'history' | 'tts';
+type TabKey = 'memory' | 'env' | 'text' | 'history' | 'tts';
 
 type AdminChatSummary = {
   id: string;
@@ -27,7 +26,6 @@ type AdminKid = {
   name: string;
   emoji?: string;
   memory: string;
-  profile: string;
   chats: AdminChatSummary[];
   messagesByChat: Record<string, AdminChatMessage[]>;
 };
@@ -36,8 +34,6 @@ type RuntimeKidCheck = {
   kidId: string;
   kidName: string;
   agentId: string;
-  profilePath: string | null;
-  profileExists: boolean;
   workspaceDir: string | null;
   workspaceExists: boolean;
   memoryPath: string | null;
@@ -121,14 +117,14 @@ type TextSettings = Record<string, {
 
 type ProfileFormState = {
   name: string;
-  ageGroup: string;
-  languages: string;
-  likes: string;
-  learningGoals: string;
-  tone: string;
-  responseStyle: string;
-  avoid: string;
-  notes: string;
+  languageMode: string;
+  replyLength: string;
+  safetyMode: string;
+  memoryWrite: string;
+  bilingualAssistEnabled: boolean;
+  storyModeEnabled: boolean;
+  homeworkHelpEnabled: boolean;
+  parentNotes: string;
 };
 
 type HistoryRange = 'all' | '7d' | 'today';
@@ -200,14 +196,14 @@ function isWithinHistoryRange(updatedAt: string, range: HistoryRange) {
 function emptyProfileForm(): ProfileFormState {
   return {
     name: '',
-    ageGroup: '',
-    languages: '',
-    likes: '',
-    learningGoals: '',
-    tone: '',
-    responseStyle: '',
-    avoid: '',
-    notes: '',
+    languageMode: '',
+    replyLength: '',
+    safetyMode: '',
+    memoryWrite: '',
+    bilingualAssistEnabled: false,
+    storyModeEnabled: false,
+    homeworkHelpEnabled: false,
+    parentNotes: '',
   };
 }
 
@@ -225,14 +221,14 @@ function profileJsonToForm(raw: string): ProfileFormState {
 
     return {
       name: typeof parsed.name === 'string' ? parsed.name : '',
-      ageGroup: typeof parsed.ageGroup === 'string' ? parsed.ageGroup : '',
-      languages: asLines(parsed.languages),
-      likes: asLines(parsed.likes),
-      learningGoals: asLines(parsed.learningGoals),
-      tone: typeof parsed.tone === 'string' ? parsed.tone : '',
-      responseStyle: asLines(parsed.responseStyle),
-      avoid: asLines(parsed.avoid),
-      notes: asLines(parsed.notes),
+      languageMode: typeof parsed.languageMode === 'string' ? parsed.languageMode : '',
+      replyLength: typeof parsed.replyLength === 'string' ? parsed.replyLength : '',
+      safetyMode: typeof parsed.safetyMode === 'string' ? parsed.safetyMode : '',
+      memoryWrite: typeof parsed.memoryWrite === 'string' ? parsed.memoryWrite : '',
+      bilingualAssistEnabled: parsed.bilingualAssistEnabled === true,
+      storyModeEnabled: parsed.storyModeEnabled === true,
+      homeworkHelpEnabled: parsed.homeworkHelpEnabled === true,
+      parentNotes: asLines(parsed.parentNotes),
     };
   } catch {
     return emptyProfileForm();
@@ -242,14 +238,14 @@ function profileJsonToForm(raw: string): ProfileFormState {
 function profileFormToJson(form: ProfileFormState) {
   const payload = {
     name: form.name.trim(),
-    ageGroup: form.ageGroup.trim(),
-    languages: toLineList(form.languages),
-    likes: toLineList(form.likes),
-    learningGoals: toLineList(form.learningGoals),
-    tone: form.tone.trim(),
-    responseStyle: toLineList(form.responseStyle),
-    avoid: toLineList(form.avoid),
-    notes: toLineList(form.notes),
+    languageMode: form.languageMode.trim(),
+    replyLength: form.replyLength.trim(),
+    safetyMode: form.safetyMode.trim(),
+    memoryWrite: form.memoryWrite.trim(),
+    bilingualAssistEnabled: form.bilingualAssistEnabled,
+    storyModeEnabled: form.storyModeEnabled,
+    homeworkHelpEnabled: form.homeworkHelpEnabled,
+    parentNotes: toLineList(form.parentNotes),
   };
 
   return JSON.stringify(payload, null, 2);
@@ -279,8 +275,6 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
   const [mediaStorageRefreshing, setMediaStorageRefreshing] = useState(false);
   const [mediaStorageCleaningKidId, setMediaStorageCleaningKidId] = useState('');
   const [ttsPreviewingKidId, setTtsPreviewingKidId] = useState('');
-  const [profileEditorMode, setProfileEditorMode] = useState<'json' | 'form'>('json');
-  const [allowUnknownProfileFields, setAllowUnknownProfileFields] = useState(false);
   const [availableVoices, setAvailableVoices] = useState<Array<{ value: string; label: string }>>([]);
   const [historyRangeByKid, setHistoryRangeByKid] = useState<Record<string, HistoryRange>>(() =>
     Object.fromEntries(props.kids.map((kid) => [kid.id, 'all'])),
@@ -291,16 +285,15 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
   const [selectedChatIdByKid, setSelectedChatIdByKid] = useState<Record<string, string>>(() =>
     Object.fromEntries(props.kids.map((kid) => [kid.id, kid.chats[0]?.id || ''])),
   );
-  const [profileForm, setProfileForm] = useState<ProfileFormState>(emptyProfileForm);
   const [status, setStatus] = useState('');
   const [mediaSmokePreviewUrl, setMediaSmokePreviewUrl] = useState('');
   const [mediaSmokePreviewAlt, setMediaSmokePreviewAlt] = useState('');
   const [geminiSmokePreviewUrl, setGeminiSmokePreviewUrl] = useState('');
   const [geminiSmokePreviewAlt, setGeminiSmokePreviewAlt] = useState('');
-  const [kidContent, setKidContent] = useState<Record<string, { memory: string; profile: string }>>(
+  const [kidContent, setKidContent] = useState<Record<string, { memory: string }>>(
     () =>
       Object.fromEntries(
-        props.kids.map((kid) => [kid.id, { memory: kid.memory, profile: kid.profile }]),
+        props.kids.map((kid) => [kid.id, { memory: kid.memory }]),
       ),
   );
   const [envValues, setEnvValues] = useState<EnvValues>(props.envValues);
@@ -312,13 +305,8 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
   const currentValue = useMemo(() => {
     if (!activeKidData || activeTab === 'env' || activeTab === 'text') return '';
     const current = kidContent[activeKidData.id];
-    return activeTab === 'memory' ? current?.memory || '' : current?.profile || '';
+    return current?.memory || '';
   }, [activeKidData, activeTab, kidContent]);
-
-  const unknownProfileKeys = useMemo(() => {
-    if (activeTab !== 'profile' || profileEditorMode !== 'json') return [] as string[];
-    return getUnknownProfileKeysFromJson(currentValue);
-  }, [activeTab, profileEditorMode, currentValue]);
 
   const historyQuery = activeKidData ? historyQueryByKid[activeKidData.id] || '' : '';
   const historyRange = activeKidData ? historyRangeByKid[activeKidData.id] || 'all' : 'all';
@@ -351,11 +339,6 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
 
   const activeChatId = activeKidData ? selectedChatIdByKid[activeKidData.id] || filteredChats[0]?.id || activeKidData.chats[0]?.id || '' : '';
   const activeChatMessages = activeKidData ? activeKidData.messagesByChat[activeChatId] || [] : [];
-
-  useEffect(() => {
-    if (activeTab !== 'profile') return;
-    setProfileForm(profileJsonToForm(currentValue));
-  }, [activeTab, activeKid, currentValue]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
@@ -396,25 +379,9 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
     setKidContent((prev) => ({
       ...prev,
       [activeKidData.id]: {
-        memory: activeTab === 'memory' ? value : prev[activeKidData.id]?.memory || '',
-        profile: activeTab === 'profile' ? value : prev[activeKidData.id]?.profile || '',
+        memory: value,
       },
     }));
-  }
-
-  function setProfileFormField(field: keyof ProfileFormState, value: string) {
-    setProfileForm((prev) => {
-      const next = {
-        ...prev,
-        [field]: value,
-      };
-
-      if (activeTab === 'profile' && activeKidData) {
-        setCurrentValue(profileFormToJson(next));
-      }
-
-      return next;
-    });
   }
 
   function setKidPin(kidId: string, value: string) {
@@ -635,10 +602,8 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
         throw new Error('未知孩子');
       }
 
-      const endpoint = activeTab === 'memory' ? '/api/memory' : '/api/profile';
-      const payload = activeTab === 'profile'
-        ? { kidId: activeKidData.id, content: currentValue, allowUnknownFields: profileEditorMode === 'json' && allowUnknownProfileFields }
-        : { kidId: activeKidData.id, content: currentValue };
+      const endpoint = '/api/memory';
+      const payload = { kidId: activeKidData.id, content: currentValue };
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -970,7 +935,6 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
               <div key={kidCheck.kidId} className="runtime-kid-card">
                 <strong>{kidCheck.kidName}</strong>
                 <div>agentId: {kidCheck.agentId || '未配置'}</div>
-                <div>profile: {kidCheck.profileExists ? '✅' : '⚠️'} {kidCheck.profilePath || '未解析'}</div>
                 <div>workspace: {kidCheck.workspaceExists ? '✅' : '⚠️'} {kidCheck.workspaceDir || '未解析'}</div>
                 <div>memory: {kidCheck.memoryExists ? '✅' : '⚠️'} {kidCheck.memoryPath || '未解析'}</div>
                 <button
@@ -1012,9 +976,6 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
             <button className={activeTab === 'memory' ? 'admin-tab active' : 'admin-tab'} onClick={() => setActiveTab('memory')}>
               智能体记忆
             </button>
-            <button className={activeTab === 'profile' ? 'admin-tab active' : 'admin-tab'} onClick={() => setActiveTab('profile')}>
-              家长资料
-            </button>
             <button className={activeTab === 'text' ? 'admin-tab active' : 'admin-tab'} onClick={() => setActiveTab('text')}>
               标题与欢迎语
             </button>
@@ -1041,46 +1002,16 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
                     ? `${activeKidData?.name || '未知孩子'} · TTS 语音设置`
                     : activeTab === 'history'
                       ? `${activeKidData?.name || '未知孩子'} · 聊天记录`
-                      : `${activeKidData?.name || '未知孩子'} · ${activeTab === 'memory' ? 'MEMORY.md' : 'profile.json'}`}
+                      : `${activeKidData?.name || '未知孩子'} · MEMORY.md`}
             </strong>
             <div className="memory-admin-actions">
-              {activeTab === 'profile' ? (
-                <>
-                  <div className="editor-mode-switch">
-                    <button
-                      type="button"
-                      className={profileEditorMode === 'json' ? 'admin-secondary-button active' : 'admin-secondary-button'}
-                      onClick={() => setProfileEditorMode('json')}
-                    >
-                      Raw JSON
-                    </button>
-                    <button
-                      type="button"
-                      className={profileEditorMode === 'form' ? 'admin-secondary-button active' : 'admin-secondary-button'}
-                      onClick={() => setProfileEditorMode('form')}
-                    >
-                      表单模式
-                    </button>
-                  </div>
-                  {profileEditorMode === 'json' ? (
-                    <label className="profile-advanced-toggle">
-                      <input
-                        type="checkbox"
-                        checked={allowUnknownProfileFields}
-                        onChange={(event) => setAllowUnknownProfileFields(event.target.checked)}
-                      />
-                      <span>允许扩展字段（高级）</span>
-                    </label>
-                  ) : null}
-                </>
-              ) : null}
               {activeTab === 'env' ? (
                 <button className="admin-secondary-button" onClick={onRestartService} disabled={restarting || saving}>
                   {restarting ? '重启中…' : '重启服务'}
                 </button>
               ) : null}
               {activeTab !== 'history' ? (
-                <button onClick={onSave} disabled={saving || restarting || ((activeTab === 'memory' || activeTab === 'profile' || activeTab === 'text' || activeTab === 'tts') && !activeKidData)}>
+                <button onClick={onSave} disabled={saving || restarting || ((activeTab === 'memory' || activeTab === 'text' || activeTab === 'tts') && !activeKidData)}>
                   {saving ? '保存中…' : '保存'}
                 </button>
               ) : null}
@@ -1436,77 +1367,6 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
                   <div className="empty-state">请选择一个会话查看内容。</div>
                 )}
               </section>
-            </div>
-          ) : activeTab === 'profile' && profileEditorMode === 'form' ? (
-            <div className="env-admin-form">
-              <p className="env-admin-note">表单模式适合快速维护常用字段；你也可以随时切回 Raw JSON。当前支持字段：name、ageGroup、languages、likes、learningGoals、tone、responseStyle、avoid、notes。</p>
-
-              <label className="env-field">
-                <span>名字</span>
-                <input type="text" value={profileForm.name} onChange={(event) => setProfileFormField('name', event.target.value)} />
-              </label>
-
-              <label className="env-field">
-                <span>年龄段</span>
-                <input type="text" value={profileForm.ageGroup} onChange={(event) => setProfileFormField('ageGroup', event.target.value)} placeholder="例如 early-elementary" />
-              </label>
-
-              <label className="env-field">
-                <span>语言（每行一项）</span>
-                <textarea className="admin-textarea" value={profileForm.languages} onChange={(event) => setProfileFormField('languages', event.target.value)} />
-              </label>
-
-              <label className="env-field">
-                <span>喜欢的内容（每行一项）</span>
-                <textarea className="admin-textarea" value={profileForm.likes} onChange={(event) => setProfileFormField('likes', event.target.value)} />
-              </label>
-
-              <label className="env-field">
-                <span>学习目标（每行一项）</span>
-                <textarea className="admin-textarea" value={profileForm.learningGoals} onChange={(event) => setProfileFormField('learningGoals', event.target.value)} />
-              </label>
-
-              <label className="env-field">
-                <span>偏好语气</span>
-                <input type="text" value={profileForm.tone} onChange={(event) => setProfileFormField('tone', event.target.value)} />
-              </label>
-
-              <label className="env-field">
-                <span>回复风格（每行一项）</span>
-                <textarea className="admin-textarea" value={profileForm.responseStyle} onChange={(event) => setProfileFormField('responseStyle', event.target.value)} />
-              </label>
-
-              <label className="env-field">
-                <span>避免内容（每行一项）</span>
-                <textarea className="admin-textarea" value={profileForm.avoid} onChange={(event) => setProfileFormField('avoid', event.target.value)} />
-              </label>
-
-              <label className="env-field">
-                <span>备注（每行一项）</span>
-                <textarea className="admin-textarea" value={profileForm.notes} onChange={(event) => setProfileFormField('notes', event.target.value)} />
-              </label>
-            </div>
-          ) : activeTab === 'profile' && profileEditorMode === 'json' ? (
-            <div className="profile-json-mode">
-              <p className="env-admin-note">
-                Raw JSON 默认按严格 schema 校验。勾选“允许扩展字段（高级）”后，可以保留额外字段，但标准字段仍会被规范化。
-              </p>
-              {unknownProfileKeys.length ? (
-                <div className={allowUnknownProfileFields ? 'profile-extra-fields profile-extra-fields-allowed' : 'profile-extra-fields'}>
-                  <strong>检测到扩展字段：</strong>
-                  <div className="profile-extra-field-list">
-                    {unknownProfileKeys.map((key) => (
-                      <code key={key}>{key}</code>
-                    ))}
-                  </div>
-                  <span>
-                    {allowUnknownProfileFields
-                      ? '当前已允许这些扩展字段被保留。'
-                      : '当前保存会被严格 schema 拦截；如需保留，请开启“允许扩展字段（高级）”。'}
-                  </span>
-                </div>
-              ) : null}
-              <textarea className="memory-editor" value={currentValue} onChange={(event) => setCurrentValue(event.target.value)} />
             </div>
           ) : (
             <textarea className="memory-editor" value={currentValue} onChange={(event) => setCurrentValue(event.target.value)} />

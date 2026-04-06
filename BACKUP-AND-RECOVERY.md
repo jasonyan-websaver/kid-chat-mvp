@@ -10,10 +10,9 @@ If you only remember one thing, back up these first:
 
 1. `.env.local`
 2. `data/chat-store/`
-3. `data/profiles/`
-4. `data/kid-settings.json`
-5. `data/memory-throttle/`
-6. each child workspace `MEMORY.md`
+3. `data/kid-settings.json`
+4. `data/memory-throttle/`
+5. each child workspace `MEMORY.md`
 
 For the current setup, child memory is usually outside this repo:
 
@@ -72,14 +71,6 @@ If lost:
 ---
 
 ### Important: should be backed up
-
-#### `data/profiles/`
-Contains parent-managed profile JSON for each child.
-
-If lost:
-
-- the app can still run
-- but child profile prompts lose structure and custom settings
 
 #### `data/kid-settings.json`
 Contains UI overrides such as:
@@ -140,7 +131,6 @@ For this project, the recommended minimum backup set is:
 ```text
 kid-chat-mvp/.env.local
 kid-chat-mvp/data/chat-store/
-kid-chat-mvp/data/profiles/
 kid-chat-mvp/data/kid-settings.json
 kid-chat-mvp/data/memory-throttle/
 ~/.openclaw/workspace-grace/MEMORY.md
@@ -330,21 +320,6 @@ If no backup exists, chat history is effectively gone.
 
 ---
 
-### Scenario D: lost `data/profiles/`
-
-Symptoms:
-
-- child prompts lose profile structure
-- admin profile editor shows empty content or recreated defaults
-
-Recovery:
-
-- restore `data/profiles/`
-- restart app if needed
-
-If no backup exists, you can recreate the JSON manually, but prior structured profile data is lost.
-
----
 
 ### Scenario E: lost `data/kid-settings.json`
 

@@ -1,14 +1,12 @@
 import { promises as fs } from 'fs';
 import { getConfiguredKids } from './kid-settings';
-import { getKidMemoryPath, getKidProfilePath, getKidWorkspaceDir } from './kid-paths';
+import { getKidMemoryPath, getKidWorkspaceDir } from './kid-paths';
 import { getImageGenerationRuntimeCheck, type ImageGenerationRuntimeCheck } from './runtime-check-image';
 
 export type KidRuntimeCheck = {
   kidId: string;
   kidName: string;
   agentId: string;
-  profilePath: string | null;
-  profileExists: boolean;
   workspaceDir: string | null;
   workspaceExists: boolean;
   memoryPath: string | null;
@@ -45,17 +43,11 @@ export async function getRuntimeCheckResult(): Promise<RuntimeCheckResult> {
 
   const kids = await Promise.all(
     configuredKids.map(async (kid) => {
-      const profilePath = getKidProfilePath(kid.id);
       const workspaceDir = getKidWorkspaceDir(kid.id);
       const memoryPath = getKidMemoryPath(kid.id);
-      const profileExists = await pathExists(profilePath);
       const workspaceExists = await pathExists(workspaceDir);
       const memoryExists = await pathExists(memoryPath);
       const kidIssues: string[] = [];
-
-      if (!profilePath || !profileExists) {
-        kidIssues.push('profile.json 不存在或不可访问');
-      }
 
       if (mode === 'real') {
         if (!workspaceDir || !workspaceExists) {
@@ -72,8 +64,6 @@ export async function getRuntimeCheckResult(): Promise<RuntimeCheckResult> {
         kidId: kid.id,
         kidName: kid.name,
         agentId: kid.agentId,
-        profilePath,
-        profileExists,
         workspaceDir,
         workspaceExists,
         memoryPath,

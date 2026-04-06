@@ -41,13 +41,7 @@ If any child agent uses `sandbox`, Docker must be running on the same host befor
 
 ## 2. Child workspace and file paths
 
-The app relies on per-child profile files and per-child OpenClaw workspaces.
-
-### Profiles
-
-- [ ] `data/profiles/grace.json` exists
-- [ ] `data/profiles/george.json` exists
-- [ ] Each profile JSON is valid
+The app relies on per-child OpenClaw workspaces and app-level settings.
 
 ### Agent memory paths
 
@@ -199,7 +193,7 @@ And inspect the saved chat index/files.
 The production process user must be able to read/write:
 
 - [ ] `data/chat-store/`
-- [ ] `data/profiles/`
+- [ ] `data/kid-settings.json`
 - [ ] `data/memory-throttle/`
 - [ ] each child workspace `MEMORY.md`
 
@@ -208,8 +202,8 @@ Suggested quick checks:
 ```bash
 ls -la data
 ls -la data/chat-store
-ls -la data/profiles
 ls -la data/memory-throttle
+cat data/kid-settings.json
 ```
 
 If production runs under a different user than your shell, verify permissions for that user specifically.

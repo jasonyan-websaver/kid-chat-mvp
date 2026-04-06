@@ -33,12 +33,10 @@ Review these files carefully:
 - [ ] `PRODUCTION-CHECKLIST.md`
 - [ ] `BACKUP-AND-RECOVERY.md`
 - [ ] `REVERSE-PROXY-EXAMPLES.md`
-- [ ] `data/profiles/README.md`
 
 ## 5. Data and sample content
 
 - [ ] `data/chat-store/` does not contain private real conversations
-- [ ] `data/profiles/*.json` do not contain private family details you do not want public
 - [ ] `data/kid-settings.json` does not expose private names/themes you want to keep private
 - [ ] sample content is intentionally publishable
 

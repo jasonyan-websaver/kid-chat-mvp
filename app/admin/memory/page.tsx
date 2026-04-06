@@ -3,7 +3,6 @@ import { readAdminEnvValues } from '@/lib/env-admin';
 import { getConfiguredKids, readKidTextSettings } from '@/lib/kid-settings';
 import { readKidAgentMemory } from '@/lib/memory-admin';
 import { getMediaStorageSummary } from '@/lib/media-storage';
-import { readKidProfile } from '@/lib/profile-admin';
 import { getRuntimeCheckResult } from '@/lib/runtime-check';
 import { getSmokeTestLog } from '@/lib/smoke-test-log';
 import { getMessagesForChat, listChatsForKid } from '@/lib/openclaw';
@@ -34,7 +33,6 @@ export default async function MemoryAdminPage() {
         name: kid.name,
         emoji: kid.emoji,
         memory: await readKidAgentMemory(kid.id),
-        profile: await readKidProfile(kid.id),
         chats,
         messagesByChat,
       };

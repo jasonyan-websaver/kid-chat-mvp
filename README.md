@@ -14,6 +14,7 @@ Installation note:
 - Kid Chat MVP can live in any directory
 - it does **not** need to be installed inside an OpenClaw repo or OpenClaw workspace
 - for real mode, the host machine only needs access to the `openclaw` CLI and the configured child workspace paths
+- example child workspace persona files are included under `examples/child-workspace-template/`
 
 ## Highlights
 
@@ -63,9 +64,8 @@ Installation note:
 
 - Parent PIN gate for admin pages
 - Read each child's saved chat history in a parent-only admin view
-- Edit each child's `profile.json` in raw JSON or optional structured form mode, both backed by the same normalized schema; raw JSON can optionally preserve advanced extra fields
 - Edit each child's agent `MEMORY.md`
-- Runtime self-check panel for env, profile, workspace, memory path visibility, image backend visibility, and per-agent connectivity testing
+- Runtime self-check panel for env, workspace, memory path visibility, image backend visibility, and per-agent connectivity testing
 - Child-specific controls for TTS, image understanding, image generation, and image edit readiness
 - Child-facing capability preview so parents can see which buttons / modes the child will actually see
 - Local image storage visibility with per-child cache cleanup controls
@@ -78,7 +78,6 @@ Installation note:
 - Mock mode for UI/demo work
 - Real OpenClaw mode for live agents
 - Local chat persistence per child
-- Profile injection into prompts
 - Automatic long-term memory extraction with throttling
 - Uploaded image understanding in real mode
 - Image-generation backend selection groundwork
@@ -110,8 +109,6 @@ Installation note:
 - `POST /api/chats` — create a new chat
 - `GET /api/memory?kidId=...` — read agent memory
 - `POST /api/memory` — save agent memory
-- `GET /api/profile?kidId=...` — read profile JSON
-- `POST /api/profile` — save profile JSON
 - `GET /api/media-storage` — read local image-cache usage summary
 - `POST /api/media-storage` — clear one child's local image cache
 - `POST /api/verify-pin` — verify child PIN
@@ -411,7 +408,6 @@ If you add more children, you will typically need to update:
 - `lib/kids.ts`
 - `lib/pin.ts`
 - `middleware.ts`
-- `data/profiles/<kid>.json`
 - related UI content
 
 ---
@@ -449,9 +445,8 @@ To add a new child:
 3. Set the display `name`
 4. Set the `title`, `emoji`, `accentColor`, and `welcome`
 5. Set the correct `agentId`
-6. Add a matching profile file in `data/profiles/<kidId>.json`
-7. Add a PIN rule for that child in `lib/pin.ts`
-8. Update any hard-coded child lists if needed
+6. Add a PIN rule for that child in `lib/pin.ts`
+7. Update any hard-coded child lists if needed
 
 Important:
 
@@ -522,36 +517,6 @@ If the command fails, the web app will also fail in real mode when trying to sen
 
 > Important: if the linked agent is configured to use `sandbox`, Docker must be running on the host machine. Otherwise the agent can fail before replying with errors like `Failed to inspect sandbox image` or `Cannot connect to the Docker daemon`.
 
-### Add the child's profile file
-
-Each child should have a matching profile file in:
-
-```text
-data/profiles/
-```
-
-Example:
-
-```text
-data/profiles/emma.json
-```
-
-A minimal starting profile could look like this:
-
-```json
-{
-  "name": "Emma",
-  "ageGroup": "early-elementary",
-  "languages": ["French", "Chinese"],
-  "likes": ["animals", "drawing"],
-  "learningGoals": ["confidence in French", "maintain comfort with Chinese", "curiosity"],
-  "tone": "warm and encouraging",
-  "responseStyle": ["short answers", "gentle guidance"],
-  "avoid": ["scary details"],
-  "notes": ["likes soft bedtime stories"]
-}
-```
-
 ### Add a PIN for the new child
 
 Child PIN rules are defined in:
@@ -580,7 +545,6 @@ Before considering the feature complete, review files such as:
 
 - `app/api/clear-pin/route.ts`
 - `lib/memory-admin.ts`
-- `lib/profile-admin.ts`
 - `lib/agent-memory.ts`
 - admin UI components that currently present Grace / George directly
 
@@ -589,7 +553,6 @@ These may need to be generalized if you want truly dynamic multi-child support.
 ### Recommended checklist when adding a child
 
 - add the child to `lib/kids.ts`
-- create `data/profiles/<kidId>.json`
 - add `KID_CHAT_PIN_<NAME>` to `.env.local`
 - update `lib/pin.ts`
 - confirm the linked `agentId` works via CLI
@@ -669,23 +632,7 @@ export function getExpectedPinForKid(kidId?: string | null) {
 }
 ```
 
-#### 4. Create `data/profiles/emma.json`
-
-```json
-{
-  "name": "Emma",
-  "ageGroup": "early-elementary",
-  "languages": ["French", "Chinese"],
-  "likes": ["drawing", "unicorns", "story time"],
-  "learningGoals": ["reading confidence in French", "creative thinking", "maintain comfort with Chinese"],
-  "tone": "warm and playful",
-  "responseStyle": ["short answers", "encouraging guidance"],
-  "avoid": ["scary details", "overly advanced explanations"],
-  "notes": ["enjoys imaginative stories and art activities"]
-}
-```
-
-#### 5. Verify Emma's agent works
+#### 4. Verify Emma's agent works
 
 Before using real mode, test the linked agent directly:
 
@@ -703,7 +650,6 @@ If Emma should also appear everywhere, review and update these areas:
 
 - `app/api/clear-pin/route.ts`
 - `lib/memory-admin.ts`
-- `lib/profile-admin.ts`
 - `lib/agent-memory.ts`
 - admin UI components that currently render only Grace / George options
 
@@ -752,20 +698,15 @@ data/chat-store/
 - `welcome.json` stores the default chat
 - `chat-*.json` stores message history
 
-### Parent-controlled profiles
+### Child workspace templates
 
-Stored in:
+Example child workspace persona files are included in:
 
 ```text
-data/profiles/
+examples/child-workspace-template/
 ```
 
-Files:
-
-- `data/profiles/grace.json`
-- `data/profiles/george.json`
-
-These are the stable, parent-managed configuration layer.
+Use them as a starting point when creating a new child agent workspace.
 
 ### Agent memory
 
@@ -794,21 +735,7 @@ data/memory-throttle/
 
 ---
 
-## Profile vs Memory
-
-These two layers are intentionally different.
-
-### `profile.json`
-Parent-controlled stable settings.
-
-Use it for things like:
-
-- age group
-- languages
-- interests
-- learning goals
-- preferred tone
-- things to avoid
+## Memory
 
 ### `MEMORY.md`
 Agent-grown long-term memory.
@@ -819,28 +746,13 @@ Use it for things the assistant learns over time, such as:
 - stable preferences
 - durable conversational patterns
 
-In short:
+The current architecture is intentionally simpler:
 
-- `profile.json` = configured by parent for product/admin settings
 - child workspace files = primary persona source
 - `MEMORY.md` = accumulated by agent
+- `kid-settings.json` = app-level settings and capabilities
 
----
-
-## Profile JSON Shape
-
-`data/profiles/*.json` should be treated as parent-controlled product configuration.
-Typical fields may include child-facing metadata, learning preferences, or admin-managed settings.
-
-If a field is a stable part of the child assistant's identity or teaching style, it should also exist in the child workspace files rather than relying on prompt injection alone.
-
-Recommended split:
-
-- keep stable child identity, language background, teaching style, and long-term preferences in workspace files
-- keep admin settings, feature flags, modes, and parent controls in `data/profiles/*.json`
-- avoid depending on full profile JSON injection in the main chat prompt
-
-See also: `data/profiles/README.md` and `KID-CHAT-ISOLATION-ARCHITECTURE.md`.
+See also: `KID-CHAT-ISOLATION-ARCHITECTURE.md`.
 
 ---
 
@@ -850,11 +762,9 @@ In real mode, user text is not sent directly to the agent as-is.
 
 The app constructs a fuller prompt containing:
 
-- child identity
-- child-friendly response instructions
-- long-term profile
-- up to 8 recent messages
-- the latest child message
+- child-friendly runtime instructions
+- recent conversation context
+- multimodal context when present
 
 This improves:
 
@@ -1031,8 +941,6 @@ kid-chat-mvp/
     mock-data.ts
     openclaw.ts
     pin.ts
-    profile-admin.ts
-    profiles.ts
     types.ts
     utils.ts
 

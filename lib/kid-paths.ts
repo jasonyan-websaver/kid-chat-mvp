@@ -1,12 +1,6 @@
 import path from 'path';
 import { getKidById } from './kids';
 
-export function getKidProfilePath(kidId: string) {
-  const kid = getKidById(kidId);
-  if (!kid) return null;
-  return path.join(process.cwd(), 'data', 'profiles', `${kid.id}.json`);
-}
-
 export function getKidWorkspaceDir(kidId: string) {
   const kid = getKidById(kidId);
   if (!kid) return null;
