@@ -5,6 +5,14 @@ import type { KidProfile } from './types';
 
 const settingsPath = path.join(process.cwd(), 'data', 'kid-settings.json');
 
+type KidRewardSettings = {
+  enabled?: boolean;
+  defaultType?: string;
+  certificateTitle?: string;
+  imageThemes?: string[];
+  encouragementStyle?: string;
+};
+
 type KidOverrides = {
   name?: string;
   emoji?: string;
@@ -17,6 +25,7 @@ type KidOverrides = {
   imageGenerationEnabled?: boolean;
   imageUnderstandingEnabled?: boolean;
   imageEditEnabled?: boolean;
+  rewardSettings?: KidRewardSettings;
 };
 
 type KidSettingsFile = Record<string, KidOverrides>;
@@ -43,6 +52,24 @@ function normalizeBoolean(value: boolean | undefined, fallback: boolean) {
   return typeof value === 'boolean' ? value : fallback;
 }
 
+function normalizeStringArray(value: string[] | undefined, fallback: string[] = []) {
+  return Array.isArray(value)
+    ? value.map((item) => String(item).trim()).filter(Boolean)
+    : fallback;
+}
+
+function normalizeRewardSettings(value: KidRewardSettings | undefined) {
+  return {
+    enabled: typeof value?.enabled === 'boolean' ? value.enabled : true,
+    defaultType: typeof value?.defaultType === 'string' && value.defaultType.trim() ? value.defaultType.trim() : 'image',
+    certificateTitle: typeof value?.certificateTitle === 'string' ? value.certificateTitle.trim() : '',
+    imageThemes: normalizeStringArray(value?.imageThemes),
+    encouragementStyle: typeof value?.encouragementStyle === 'string' && value.encouragementStyle.trim()
+      ? value.encouragementStyle.trim()
+      : 'gentle',
+  };
+}
+
 export async function getConfiguredKids(): Promise<KidProfile[]> {
   const settings = await readSettingsFile();
   return kids.map((kid) => ({
@@ -62,6 +89,7 @@ export async function getConfiguredKids(): Promise<KidProfile[]> {
       imageUnderstanding: normalizeBoolean(settings[kid.id]?.imageUnderstandingEnabled, kid.capabilities?.imageUnderstanding ?? true),
       imageEdit: normalizeBoolean(settings[kid.id]?.imageEditEnabled, kid.capabilities?.imageEdit ?? false),
     },
+    rewardSettings: normalizeRewardSettings(settings[kid.id]?.rewardSettings),
   }));
 }
 
@@ -87,6 +115,7 @@ export async function getConfiguredKidById(kidId: string): Promise<KidProfile | 
       imageUnderstanding: normalizeBoolean(settings[base.id]?.imageUnderstandingEnabled, base.capabilities?.imageUnderstanding ?? true),
       imageEdit: normalizeBoolean(settings[base.id]?.imageEditEnabled, base.capabilities?.imageEdit ?? false),
     },
+    rewardSettings: normalizeRewardSettings(settings[base.id]?.rewardSettings),
   };
 }
 
@@ -107,12 +136,13 @@ export async function readKidTextSettings() {
         imageGenerationEnabled: normalizeBoolean(settings[kid.id]?.imageGenerationEnabled, kid.capabilities?.imageGeneration ?? true),
         imageUnderstandingEnabled: normalizeBoolean(settings[kid.id]?.imageUnderstandingEnabled, kid.capabilities?.imageUnderstanding ?? true),
         imageEditEnabled: normalizeBoolean(settings[kid.id]?.imageEditEnabled, kid.capabilities?.imageEdit ?? false),
+        rewardSettings: normalizeRewardSettings(settings[kid.id]?.rewardSettings),
       },
     ]),
-  ) as Record<string, { name: string; emoji: string; accentColor: string; title: string; welcome: string; ttsEnabled: boolean; ttsPreferredVoiceName: string; ttsRate: number; imageGenerationEnabled: boolean; imageUnderstandingEnabled: boolean; imageEditEnabled: boolean }>;
+  ) as Record<string, { name: string; emoji: string; accentColor: string; title: string; welcome: string; ttsEnabled: boolean; ttsPreferredVoiceName: string; ttsRate: number; imageGenerationEnabled: boolean; imageUnderstandingEnabled: boolean; imageEditEnabled: boolean; rewardSettings: { enabled: boolean; defaultType: string; certificateTitle: string; imageThemes: string[]; encouragementStyle: string } }>;
 }
 
-export async function writeKidTextSettings(input: Record<string, { name?: string; emoji?: string; accentColor?: string; title?: string; welcome?: string; ttsEnabled?: boolean; ttsPreferredVoiceName?: string; ttsRate?: number; imageGenerationEnabled?: boolean; imageUnderstandingEnabled?: boolean; imageEditEnabled?: boolean }>) {
+export async function writeKidTextSettings(input: Record<string, { name?: string; emoji?: string; accentColor?: string; title?: string; welcome?: string; ttsEnabled?: boolean; ttsPreferredVoiceName?: string; ttsRate?: number; imageGenerationEnabled?: boolean; imageUnderstandingEnabled?: boolean; imageEditEnabled?: boolean; rewardSettings?: KidRewardSettings }>) {
   const next: KidSettingsFile = {};
 
   for (const kid of kids) {
@@ -128,6 +158,7 @@ export async function writeKidTextSettings(input: Record<string, { name?: string
       imageGenerationEnabled: normalizeBoolean(input[kid.id]?.imageGenerationEnabled, kid.capabilities?.imageGeneration ?? true),
       imageUnderstandingEnabled: normalizeBoolean(input[kid.id]?.imageUnderstandingEnabled, kid.capabilities?.imageUnderstanding ?? true),
       imageEditEnabled: normalizeBoolean(input[kid.id]?.imageEditEnabled, kid.capabilities?.imageEdit ?? false),
+      rewardSettings: normalizeRewardSettings(input[kid.id]?.rewardSettings),
     };
   }
 

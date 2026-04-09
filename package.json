@@ -1,6 +1,6 @@
 {
   "name": "kid-chat-mvp",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -26,6 +26,7 @@
     "@types/react-dom": "18.3.1",
     "eslint": "8.57.1",
     "eslint-config-next": "14.2.12",
+    "playwright": "^1.59.1",
     "typescript": "5.7.2"
   }
 }

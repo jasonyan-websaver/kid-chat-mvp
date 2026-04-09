@@ -1,4 +1,5 @@
 import { AdminPanel } from '@/components/admin-panel';
+import { readAdminTaskStatuses } from '@/lib/admin-task-status';
 import { readAdminEnvValues } from '@/lib/env-admin';
 import { getConfiguredKids, readKidTextSettings } from '@/lib/kid-settings';
 import { readKidAgentMemory } from '@/lib/memory-admin';
@@ -10,13 +11,14 @@ import { getMessagesForChat, listChatsForKid } from '@/lib/openclaw';
 export const dynamic = 'force-dynamic';
 
 export default async function MemoryAdminPage() {
-  const [configuredKids, envValues, textSettings, runtimeCheck, mediaStorage, smokeTests] = await Promise.all([
+  const [configuredKids, envValues, textSettings, runtimeCheck, mediaStorage, smokeTests, taskStatuses] = await Promise.all([
     getConfiguredKids(),
     readAdminEnvValues(),
     readKidTextSettings(),
     getRuntimeCheckResult(),
     getMediaStorageSummary(),
     getSmokeTestLog(),
+    readAdminTaskStatuses(),
   ]);
 
   const kidData = await Promise.all(
@@ -39,5 +41,5 @@ export default async function MemoryAdminPage() {
     }),
   );
 
-  return <AdminPanel kids={kidData} envValues={envValues} textSettings={textSettings} runtimeCheck={runtimeCheck} mediaStorage={mediaStorage} smokeTests={smokeTests} />;
+  return <AdminPanel kids={kidData} envValues={envValues} textSettings={textSettings} runtimeCheck={runtimeCheck} mediaStorage={mediaStorage} smokeTests={smokeTests} taskStatuses={taskStatuses} />;
 }

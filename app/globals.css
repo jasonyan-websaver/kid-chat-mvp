@@ -235,6 +235,55 @@ button, input, textarea { font: inherit; }
   overflow-wrap: anywhere;
 }
 
+.task-panel {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+}
+
+.task-panel-copy {
+  min-width: 0;
+}
+
+.task-panel-copy strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.task-panel-copy p {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.55;
+}
+
+.task-panel-button {
+  border: 0;
+  color: white;
+  min-width: 108px;
+  min-height: 46px;
+  border-radius: 14px;
+  font-weight: 800;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.task-panel-error {
+  margin-top: 8px;
+  color: #b91c1c;
+  font-size: 13px;
+}
+
+.chat-welcome-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
 .messages {
   flex: 1;
   min-height: 0;
@@ -1399,6 +1448,7 @@ button, input, textarea { font: inherit; }
   background: color-mix(in srgb, var(--panel) 94%, var(--bg) 6%);
   padding: 12px;
   cursor: pointer;
+  color: var(--text);
 }
 
 .admin-history-item.active {
@@ -1418,11 +1468,335 @@ button, input, textarea { font: inherit; }
   margin-top: 6px;
 }
 
+.admin-history-item strong {
+  color: var(--text);
+}
+
 .admin-history-viewer {
   display: flex;
   flex-direction: column;
   gap: 12px;
   min-height: 320px;
+}
+
+.admin-task-browser {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.admin-task-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.admin-task-summary-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--panel) 94%, var(--bg) 6%);
+}
+
+.admin-task-summary-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.admin-task-summary-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.admin-task-summary-meta,
+.admin-task-card-meta,
+.admin-task-card-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.admin-task-summary-card-actions {
+  justify-content: space-between;
+}
+
+.admin-task-create-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.admin-task-create-form input,
+.admin-task-create-form select {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0 12px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.admin-task-create-textarea {
+  min-height: 120px;
+}
+
+.admin-task-action-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.admin-task-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(320px, 0.9fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.admin-task-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.admin-task-column {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--panel) 96%, var(--bg) 4%);
+}
+
+.admin-task-column-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-task-column-header span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.admin-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 120px;
+}
+
+.admin-task-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel);
+  color: var(--text);
+}
+
+.admin-task-card-selectable {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
+.admin-task-card-selectable.active {
+  border-color: color-mix(in srgb, var(--text) 24%, var(--line) 76%);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+}
+
+.admin-task-card p {
+  margin: 0;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  color: var(--muted);
+}
+
+.admin-task-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-task-card-top strong {
+  color: var(--text);
+}
+
+.admin-task-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.admin-task-badge-pending {
+  background: color-mix(in srgb, #2563eb 12%, var(--panel) 88%);
+  color: #1d4ed8;
+}
+
+.admin-task-badge-claimed {
+  background: color-mix(in srgb, #f59e0b 16%, var(--panel) 84%);
+  color: #b45309;
+}
+
+.admin-task-badge-completed {
+  background: color-mix(in srgb, #16a34a 14%, var(--panel) 86%);
+  color: #15803d;
+}
+
+.admin-task-badge-archived {
+  background: color-mix(in srgb, var(--text) 10%, var(--panel) 90%);
+  color: var(--muted);
+}
+
+.admin-task-detail-panel {
+  position: sticky;
+  top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--panel) 96%, var(--bg) 4%);
+}
+
+.admin-task-detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-task-detail-header h3 {
+  margin: 6px 0 0;
+  font-size: 20px;
+}
+
+.admin-task-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.admin-task-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.admin-task-detail-actions .admin-secondary-button {
+  min-height: 40px;
+}
+
+.admin-task-detail-state-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel) 92%, var(--bg) 8%);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.admin-task-action-neutral {
+  border-color: color-mix(in srgb, #2563eb 20%, var(--line) 80%);
+}
+
+.admin-task-action-warn {
+  border-color: color-mix(in srgb, #f59e0b 40%, var(--line) 60%);
+  background: color-mix(in srgb, #f59e0b 10%, var(--panel) 90%);
+}
+
+.admin-task-action-success {
+  border-color: color-mix(in srgb, #16a34a 40%, var(--line) 60%);
+  background: color-mix(in srgb, #16a34a 10%, var(--panel) 90%);
+}
+
+.admin-task-action-muted {
+  border-color: color-mix(in srgb, var(--text) 18%, var(--line) 82%);
+  background: color-mix(in srgb, var(--text) 4%, var(--panel) 96%);
+}
+
+.admin-task-action-danger {
+  border-color: color-mix(in srgb, #dc2626 45%, var(--line) 55%);
+  background: color-mix(in srgb, #dc2626 10%, var(--panel) 90%);
+  color: #b91c1c;
+}
+
+.dark .admin-task-action-danger {
+  color: #fca5a5;
+}
+
+.admin-task-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.admin-task-detail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+}
+
+.admin-task-detail-item span,
+.admin-task-detail-section-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.admin-task-detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.admin-task-detail-content {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  white-space: pre-wrap;
+  line-height: 1.7;
+}
+
+.admin-task-json {
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #0f172a;
+  color: #e2e8f0;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .admin-history-message {
@@ -1469,6 +1843,11 @@ mark {
   .sidebar { border-right: 0; border-bottom: 1px solid var(--line); }
   .memory-admin-shell { grid-template-columns: 1fr; }
   .admin-history-layout { grid-template-columns: 1fr; }
+  .admin-task-overview-grid { grid-template-columns: 1fr; }
+  .admin-task-workspace { grid-template-columns: 1fr; }
+  .admin-task-columns { grid-template-columns: 1fr; }
+  .admin-task-detail-panel { position: static; }
+  .admin-task-detail-grid { grid-template-columns: 1fr; }
   .hero-topbar { flex-direction: column; align-items: stretch; }
   .chat-header-topbar { flex-direction: column; align-items: stretch; }
 }

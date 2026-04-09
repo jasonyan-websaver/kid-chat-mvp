@@ -2,6 +2,65 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.3.1 - 2026-04-09
+
+Parent admin task-browser upgrade and validation pass.
+
+### Added
+
+- parent-admin task browser inside the existing `/admin/memory` experience
+- two-stage task workspace layout with summary cards, task columns, and sticky task-detail panel
+- parent-side task creation flow wired directly into `tasks/inbox`
+- per-task admin actions for moving, archiving, deleting, and copying task JSON
+- local Playwright-based browser smoke coverage for the parent admin task flow
+
+### Improved
+
+- task browsing now keeps selection stable after single-task move operations
+- deleting a selected task now auto-selects the next visible task when possible
+- task cards now stay compact by keeping full instructions only in the detail panel
+- dark theme text contrast is explicitly styled for task cards and related history cards
+- admin task management now favors selected-task actions instead of only kid-level bulk actions
+
+### Fixed
+
+- bulk archive actions now rewrite task JSON `status` to `archived` when moving files into the archived folder
+- archived-task follow-up actions no longer fail because of mismatched `from` state values
+- earlier suspected admin route `500` issue was verified as an auth/cookie test artifact rather than a real page-render failure
+
+### Validation
+
+- `npm run typecheck`
+- `npm run build`
+- local API smoke for create, status, move, archive, and delete flows
+- local browser smoke for parent PIN login, task browsing, task creation, selected-task actions, and route stability
+
+## v0.3.0 - 2026-04-07
+
+French-writing reward-loop MVP.
+
+### Added
+
+- dedicated French-writing task flow for George / Grace chats
+- lightweight task assignment API for short French writing challenges
+- per-chat French-writing task persistence under `data/french-writing-tasks/`
+- automatic basic completion checks for child submissions:
+  - looks like French
+  - stays on topic
+  - length is roughly in range
+- automatic reward-image generation when the child completes the task successfully
+- child chat header task panel so a parent can trigger the current MVP flow without entering admin
+
+### Improved
+
+- real chat flow can now detect an active French-writing task and evaluate the child submission before falling back to normal assistant chat
+- reward delivery now stays inside the existing chat experience, so assignment, submission, evaluation, and reward all happen in one thread
+
+### Notes
+
+This release intentionally avoids building a general-purpose task engine.
+It ships a narrow but end-to-end learning loop focused on French writing practice and theme-matched visual rewards.
+
 ## v0.2.2 - 2026-03-28
 
 Markdown rendering and TTS cleanup update.

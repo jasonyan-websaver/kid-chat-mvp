@@ -1,6 +1,8 @@
 import { notFound } from 'next/navigation';
 import { ChatShell } from '@/components/chat-shell';
 import { getConfiguredKidById } from '@/lib/kid-settings';
+import { importInboxTaskToKidChat } from '@/lib/kid-task-inbox';
+import { getLastActiveChatId } from '@/lib/last-active-chat';
 import { getMessagesForChat, listChatsForKid } from '@/lib/openclaw';
 
 export default async function KidChatPage({
@@ -18,8 +20,12 @@ export default async function KidChatPage({
     notFound();
   }
 
+  await importInboxTaskToKidChat(kid.id).catch(() => null);
+
   const chats = await listChatsForKid(kid.id);
-  const activeChatId = chat ?? chats[0]?.id ?? 'default';
+  const lastActiveChatId = await getLastActiveChatId(kid.id);
+  const fallbackChatId = chats.some((item) => item.id === lastActiveChatId) ? lastActiveChatId : chats[0]?.id;
+  const activeChatId = chat ?? fallbackChatId ?? 'welcome';
   const messages = await getMessagesForChat(kid.id, activeChatId);
 
   return (

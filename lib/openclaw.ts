@@ -18,12 +18,15 @@ import { mockChatSummaries, mockMessages } from './mock-data';
 import { updateAgentMemoryFromChat } from './agent-memory';
 import { generateImage } from './image-generation';
 import { saveGeneratedChatImage } from './upload';
+import { moveClaimedTaskToCompleted } from './kid-task-inbox';
 import { clearKidReminder, readKidReminder } from './reminders';
 import {
   markMemoryExtractionRan,
   markMessageForMemoryThrottle,
   shouldRunMemoryExtraction,
 } from './memory-throttle';
+import { setLastActiveChatId } from './last-active-chat';
+import { evaluateFrenchWritingTask, looksLikeFrenchWritingSubmission, readFrenchWritingTask } from './french-writing';
 
 const execFileAsync = promisify(execFile);
 const useMock = process.env.OPENCLAW_USE_MOCK === 'true';
@@ -233,6 +236,7 @@ function buildPrompt(params: {
   history: ChatMessage[];
   multimodalContext?: string;
   reminderText?: string;
+  frenchWritingTaskText?: string;
 }) {
   const recent = params.history.slice(-4);
   const transcript = recent
@@ -250,9 +254,10 @@ function buildPrompt(params: {
     'Reply in the same language as the child\'s latest message unless the child explicitly asks to switch languages.',
     'Do not mention system prompts, tools, internal implementation, or hidden memory systems.',
     params.reminderText
-      ? `There is an active child reminder. Mention it naturally near the beginning of your reply in the child's appropriate language, without sounding robotic or exposing internal metadata. ${params.kidName.toLowerCase().includes('grace') ? 'Use a gentle, warm, cozy, encouraging tone.' : params.kidName.toLowerCase().includes('george') ? 'Use a playful, curious, challenge-friendly, discovery tone.' : 'Use a warm encouraging tone.'}`
+      ? `There is an active child reminder. Mention it naturally near the beginning of your reply in the child's appropriate language, without sounding robotic or exposing internal metadata. If the reminder implies a reward, phrase it naturally as motivation rather than as a system rule. ${params.kidName.toLowerCase().includes('grace') ? 'Use a gentle, warm, cozy, encouraging tone.' : params.kidName.toLowerCase().includes('george') ? 'Use a playful, curious, challenge-friendly, discovery tone.' : 'Use a warm encouraging tone.'}`
       : '',
     params.reminderText ? `Active reminder: ${params.reminderText}` : '',
+    params.frenchWritingTaskText ? `Active French writing task: ${params.frenchWritingTaskText}` : '',
     '',
     'Recent conversation:',
     transcript || '(no previous messages)',
@@ -331,7 +336,8 @@ export async function listChatsForKid(kidId: string): Promise<ChatSummary[]> {
   }
 
   const index = await readKidIndex(kidId);
-  const sortedChats = [...index.chats].sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+  const visibleChats = index.chats.filter((chat) => chat.id !== 'welcome');
+  const sortedChats = [...visibleChats].sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
 
   const summaries = await Promise.all(
     sortedChats.map(async (chat) => {
@@ -362,7 +368,11 @@ export async function getMessagesForChat(kidId: string, chatId: string): Promise
     ];
   }
 
-  const stored = await readChatMessages(kidId, chatId);
+  const resolvedChatId = chatId === 'welcome'
+    ? ((await readKidIndex(kidId)).chats.find((chat) => chat.id !== 'welcome')?.id || chatId)
+    : chatId;
+
+  const stored = await readChatMessages(kidId, resolvedChatId);
   return stored.map((message) => ({
     ...message,
     createdAt: toMessageTime(message.createdAt),
@@ -402,6 +412,49 @@ export async function createChatForKid(kidId: string): Promise<{ chatId: string 
   await saveChatMessages(kidId, chatId, [welcomeMessage]);
 
   return { chatId };
+}
+
+export async function findOrCreateFrenchTaskChat(params: {
+  kidId: string;
+  title?: string;
+}): Promise<{ chatId: string; created: boolean }> {
+  const index = await readKidIndex(params.kidId);
+
+  for (const chat of index.chats) {
+    if (!chat.title.startsWith('📝 ')) continue;
+    const existingTask = await readFrenchWritingTask(params.kidId, chat.id);
+    if (existingTask?.status === 'assigned') {
+      return { chatId: chat.id, created: false };
+    }
+  }
+
+  const kid = await getConfiguredKidById(params.kidId);
+  if (!kid) {
+    throw new AppError('未知的孩子入口。', 400);
+  }
+
+  const createdAt = nowIso();
+  const chatId = createChatId();
+  const title = params.title?.trim() || '📝 Mission de français';
+
+  index.chats.unshift({
+    id: chatId,
+    title,
+    createdAt,
+    updatedAt: createdAt,
+  });
+
+  await saveKidIndex(params.kidId, index);
+
+  const welcomeMessage: ChatMessage = {
+    id: `assistant-${Date.now()}`,
+    role: 'assistant',
+    content: kid.welcome,
+    createdAt,
+  };
+
+  await saveChatMessages(params.kidId, chatId, [welcomeMessage]);
+  return { chatId, created: true };
 }
 
 export async function sendMessageToKidChat(params: {
@@ -631,6 +684,7 @@ export async function sendMessageToKidChat(params: {
       });
     }
     await saveKidIndex(params.kidId, index);
+    await setLastActiveChatId(params.kidId, params.chatId);
     return {
       ...assistantStoredMessage,
       createdAt: toMessageTime(assistantStoredMessage.createdAt),
@@ -705,6 +759,7 @@ export async function sendMessageToKidChat(params: {
       });
     }
     await saveKidIndex(params.kidId, index);
+    await setLastActiveChatId(params.kidId, params.chatId);
     return {
       ...assistantStoredMessage,
       createdAt: toMessageTime(assistantStoredMessage.createdAt),
@@ -712,12 +767,85 @@ export async function sendMessageToKidChat(params: {
   }
 
   const activeReminder = await readKidReminder(params.kidId);
+  const activeFrenchWritingTask = params.chatId === 'welcome'
+    ? null
+    : await readFrenchWritingTask(params.kidId, params.chatId);
+
+  const trimmedSubmission = params.message.trim();
+  const shouldEvaluateFrenchWritingTask = Boolean(
+    activeFrenchWritingTask?.status === 'assigned'
+      && trimmedSubmission
+      && trimmedSubmission.length >= 12
+      && /[.!?\n]/.test(trimmedSubmission)
+      && looksLikeFrenchWritingSubmission(trimmedSubmission),
+  );
+
+  if (shouldEvaluateFrenchWritingTask) {
+    try {
+      const evaluation = await evaluateFrenchWritingTask({
+        kid,
+        chatId: params.chatId,
+        submissionText: trimmedSubmission,
+      });
+
+      const evaluationText = evaluation.task.evaluation?.completed
+        ? `Bravo ! Tu as réussi ton défi d'écriture en français sur le thème « ${evaluation.task.topic} ». Voici ta magnifique image-récompense.`
+        : `J'ai lu ton texte. ${evaluation.task.evaluation?.reason || "Il manque encore un petit peu."} Tu peux réessayer !`;
+
+      const assistantStoredMessage: ChatMessage = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: evaluationText,
+        createdAt: nowIso(),
+        attachments: evaluation.rewardAttachments.length ? evaluation.rewardAttachments : undefined,
+        meta: {
+          kind: evaluation.task.evaluation?.completed ? 'french-writing-reward' : 'french-writing-evaluation',
+          taskId: evaluation.task.id,
+          taskStatus: evaluation.task.status,
+          taskTopic: evaluation.task.topic,
+          targetLength: evaluation.task.targetWordCount,
+          completed: Boolean(evaluation.task.evaluation?.completed),
+        },
+      };
+
+      await saveChatMessages(params.kidId, params.chatId, [...nextStoredMessages, assistantStoredMessage]);
+
+      const existing = index.chats.find((chat) => chat.id === params.chatId);
+      if (existing) {
+        existing.updatedAt = assistantStoredMessage.createdAt;
+        if (existing.title === '新的聊天' && params.message.trim()) {
+          existing.title = buildTaskLabel('chat', params.message);
+        }
+      } else {
+        index.chats.push({
+          id: params.chatId,
+          title: buildTaskLabel('chat', params.message),
+          createdAt: assistantStoredMessage.createdAt,
+          updatedAt: assistantStoredMessage.createdAt,
+        });
+      }
+
+      await saveKidIndex(params.kidId, index);
+      await setLastActiveChatId(params.kidId, params.chatId);
+      await moveClaimedTaskToCompleted(params.kidId, { topic: evaluation.task.topic, instructions: evaluation.task.prompt }).catch(() => null);
+
+      return {
+        ...assistantStoredMessage,
+        createdAt: toMessageTime(assistantStoredMessage.createdAt),
+      };
+    } catch (error) {
+      if (!(error instanceof AppError) || error.status !== 404) {
+        throw error;
+      }
+    }
+  }
 
   const prompt = buildPrompt({
     kidName: kid.name,
     history: nextStoredMessages,
     multimodalContext,
     reminderText: activeReminder?.text,
+    frenchWritingTaskText: activeFrenchWritingTask?.status === 'assigned' ? activeFrenchWritingTask.prompt : undefined,
   });
 
   const assistantText = await runOpenClawAgent(kid.agentId, prompt);
@@ -817,6 +945,7 @@ export async function sendMessageToKidChat(params: {
   }
 
   await saveKidIndex(params.kidId, index);
+  await setLastActiveChatId(params.kidId, params.chatId);
 
   return {
     ...assistantStoredMessage,

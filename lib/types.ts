@@ -10,6 +10,14 @@ export type KidCapabilities = {
   imageEdit: boolean;
 };
 
+export type KidRewardSettings = {
+  enabled: boolean;
+  defaultType: string;
+  certificateTitle?: string;
+  imageThemes?: string[];
+  encouragementStyle?: string;
+};
+
 export type KidProfile = {
   id: string;
   name: string;
@@ -20,6 +28,7 @@ export type KidProfile = {
   welcome: string;
   tts?: KidTtsSettings;
   capabilities?: KidCapabilities;
+  rewardSettings?: KidRewardSettings;
 };
 
 export type ChatSummary = {
@@ -70,6 +79,14 @@ export type ChatMessage = {
   content: string;
   createdAt: string;
   attachments?: ChatAttachment[];
+  meta?: {
+    kind?: 'french-writing-task' | 'french-writing-evaluation' | 'french-writing-reward';
+    taskId?: string;
+    taskStatus?: 'assigned' | 'completed';
+    taskTopic?: string;
+    targetLength?: number;
+    completed?: boolean;
+  };
   /** @deprecated Use attachments[] instead. Kept only for backward compatibility with older stored chats. */
   attachment?: {
     type: 'image';

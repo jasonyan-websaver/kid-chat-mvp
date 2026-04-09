@@ -9,6 +9,15 @@ import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import { IMAGE_UPLOAD_ACCEPTED_TYPES, IMAGE_UPLOAD_MAX_BYTES, IMAGE_UPLOAD_MAX_HEIGHT, IMAGE_UPLOAD_MAX_PIXELS, IMAGE_UPLOAD_MAX_WIDTH, getAcceptedImageTypeLabel, formatBytesToMb } from '@/lib/image-upload-policy';
 import { ChatMessage, ChatSummary, KidProfile, getMessageAttachments } from '@/lib/types';
+
+type FrenchWritingTaskState = {
+  id: string;
+  status: 'assigned' | 'completed';
+  topic: string;
+  prompt: string;
+  targetWordCount: number;
+  rewardTheme: string;
+};
 import { cn } from '@/lib/utils';
 import { ThemeToggle } from '@/components/theme-toggle';
 
@@ -149,10 +158,17 @@ export function ChatShell(props: {
   const [speakingMessageId, setSpeakingMessageId] = useState('');
   const [ttsSupported, setTtsSupported] = useState(false);
   const [ttsVoices, setTtsVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [taskLoading, setTaskLoading] = useState(false);
+  const [taskError, setTaskError] = useState('');
+  const [frenchWritingTask, setFrenchWritingTask] = useState<FrenchWritingTaskState | null>(null);
+  const [canStartTask, setCanStartTask] = useState(true);
+  const [showTaskPanel, setShowTaskPanel] = useState(false);
+  const [currentChatId, setCurrentChatId] = useState(initialChatId);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const speechUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
   useEffect(() => {
+    setCurrentChatId(initialChatId);
     setMessages(initialMessages);
     setDraft('');
     setPendingImage(null);
@@ -160,7 +176,35 @@ export function ChatShell(props: {
     setComposerMode('chat');
     setComposerError('');
     setSending(false);
+    setTaskError('');
   }, [initialChatId, initialMessages]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadTask() {
+      try {
+        const response = await fetch(`/api/french-writing-task?kidId=${encodeURIComponent(kid.id)}&chatId=${encodeURIComponent(currentChatId)}`);
+        const data = (await response.json().catch(() => ({}))) as { task?: FrenchWritingTaskState | null; canStartTask?: boolean; showTaskPanel?: boolean };
+        if (!cancelled) {
+          setFrenchWritingTask(data.task || null);
+          setCanStartTask(data.canStartTask !== false);
+          setShowTaskPanel(data.showTaskPanel === true);
+        }
+      } catch {
+        if (!cancelled) {
+          setFrenchWritingTask(null);
+          setCanStartTask(true);
+          setShowTaskPanel(false);
+        }
+      }
+    }
+
+    void loadTask();
+    return () => {
+      cancelled = true;
+    };
+  }, [kid.id, currentChatId]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -257,6 +301,7 @@ export function ChatShell(props: {
       }
 
       const data = (await response.json()) as { chatId: string };
+      setCurrentChatId(data.chatId);
       router.push(`/kid/${kid.id}?chat=${data.chatId}`);
       router.refresh();
     } catch (error) {
@@ -348,6 +393,60 @@ export function ChatShell(props: {
     window.speechSynthesis.speak(utterance);
   }
 
+  async function assignFrenchWritingTask() {
+    if (taskLoading) return;
+    setTaskLoading(true);
+    setTaskError('');
+
+    try {
+      const response = await fetch('/api/french-writing-task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kidId: kid.id,
+          chatId: currentChatId,
+          topic: kid.id === 'george' ? 'rocket' : 'rocket',
+          targetWordCount: 20,
+        }),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as { task?: FrenchWritingTaskState; taskChatId?: string; createdTaskChat?: boolean; error?: string };
+      if (!response.ok || !data.task) {
+        throw new Error(data.error || '布置法语写作任务失败，请稍后再试。');
+      }
+
+      const task = data.task;
+      setFrenchWritingTask(task);
+      if (data.taskChatId) {
+        setCurrentChatId(data.taskChatId);
+        router.push(`/kid/${kid.id}?chat=${data.taskChatId}`);
+        router.refresh();
+        return;
+      }
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `task-${Date.now()}`,
+          role: 'assistant',
+          content: `Nouveau défi d'écriture en français !\n\n${task.prompt}`,
+          createdAt: '刚刚',
+          meta: {
+            kind: 'french-writing-task',
+            taskId: task.id,
+            taskStatus: task.status,
+            taskTopic: task.topic,
+            targetLength: task.targetWordCount,
+          },
+        },
+      ]);
+    } catch (error) {
+      setTaskError(error instanceof Error ? error.message : '布置法语写作任务失败，请稍后再试。');
+    } finally {
+      setTaskLoading(false);
+    }
+  }
+
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setComposerError('');
@@ -398,7 +497,7 @@ export function ChatShell(props: {
     try {
       const payload = new FormData();
       payload.set('kidId', kid.id);
-      payload.set('chatId', initialChatId);
+      payload.set('chatId', currentChatId);
       payload.set('message', message);
       if (modeToSend === 'image_generation') {
         payload.set('mode', 'image_generation');
@@ -453,6 +552,11 @@ export function ChatShell(props: {
         next.push(reply);
         return next;
       });
+
+      if (reply.meta?.kind === 'french-writing-reward') {
+        setFrenchWritingTask((prev) => prev ? { ...prev, status: 'completed' } : prev);
+      }
+
       router.refresh();
     } catch (error) {
       setMessages((prev) => [
@@ -470,7 +574,8 @@ export function ChatShell(props: {
     }
   }
 
-  const activeChat = chats.find((chat) => chat.id === initialChatId);
+  const activeChat = chats.find((chat) => chat.id === currentChatId);
+  const isTaskChat = Boolean(activeChat?.title?.startsWith('📝 '));
 
   return (
     <div className="chat-layout">
@@ -494,9 +599,9 @@ export function ChatShell(props: {
             <Link
               key={chat.id}
               href={`/kid/${kid.id}?chat=${chat.id}`}
-              className={cn('chat-item', chat.id === initialChatId && 'active')}
+              className={cn('chat-item', chat.id === currentChatId && 'active')}
               style={
-                chat.id === initialChatId
+                chat.id === currentChatId
                   ? {
                       color: kid.accentColor,
                       borderColor: `${kid.accentColor}66`,
@@ -532,6 +637,29 @@ export function ChatShell(props: {
               <ThemeToggle />
             </div>
           </div>
+
+          {!isTaskChat && showTaskPanel && canStartTask ? (
+            <div className="task-panel" style={{ borderColor: `${kid.accentColor}30`, background: `${kid.accentColor}10` }}>
+              <div className="task-panel-copy">
+                <strong>Défi d’écriture en français</strong>
+                <p>
+                  {frenchWritingTask?.status === 'completed'
+                    ? 'La dernière mission est terminée. Tu peux en lancer une nouvelle quand tu veux dans un chat dédié.'
+                    : "Clique sur le bouton pour accepter un petit défi d’écriture en français. La mission s’ouvrira dans un chat dédié."}
+                </p>
+                {taskError ? <div className="task-panel-error">{taskError}</div> : null}
+              </div>
+              <button
+                type="button"
+                className="task-panel-button"
+                style={{ background: kid.accentColor }}
+                onClick={assignFrenchWritingTask}
+                disabled={taskLoading}
+              >
+                {taskLoading ? 'Chargement…' : frenchWritingTask?.status === 'completed' ? 'Nouvelle mission' : 'Accepter la mission'}
+              </button>
+            </div>
+          ) : null}
         </header>
 
         <div className="messages" ref={messagesContainerRef}>

@@ -1,6 +1,6 @@
 # Kid Chat MVP
 
-**Version:** v0.2.2  
+**Version:** v0.3.0  
 **License:** MIT
 
 Kid Chat MVP is an open-source, family-oriented chat app designed for children and parents.
@@ -20,12 +20,13 @@ Installation note:
 
 - Separate child entry points with PIN protection
 - Independent chat history per child
-- Parent admin for profiles, memory, runtime checks, image storage visibility, and cache cleanup
+- Parent admin for profiles, memory, runtime checks, image storage visibility, cache cleanup, and task management
 - Parent-only chat history review with search, highlighting, and time filters
 - Raw JSON + structured form profile editing
 - Mock mode and real OpenClaw mode
 - Multimodal groundwork for image understanding / generation / edit flows
 - Upload safety guardrails for image type, size, dimensions, pixel count, and per-kid upload throttling
+- French-writing task MVP: assign a short French writing challenge, let the child submit inside chat, auto-check basic completion, and issue a theme-matched reward image
 - PM2, backup/recovery, and reverse proxy docs included
 
 ## Project Notes
@@ -71,6 +72,7 @@ Installation note:
 - Local image storage visibility with per-child cache cleanup controls
 - Recent smoke-test result visibility for image backends
 - Save changes directly in the browser
+- Parent task browser with task creation, status movement, archive/delete actions, and raw task JSON copy
 - Light mode / dark mode
 
 ### Runtime behavior
@@ -114,6 +116,9 @@ Installation note:
 - `POST /api/verify-pin` — verify child PIN
 - `POST /api/verify-admin-pin` — verify parent PIN
 - `POST /api/clear-pin` — clear child PIN cookies
+- `GET /api/admin-task-status` — read grouped parent task status for all kids
+- `POST /api/admin-task-create` — create a new parent-managed task in inbox
+- `POST /api/admin-task-manage` — move, archive, copy, or delete parent-managed tasks
 
 ---
 
@@ -180,6 +185,15 @@ npm run backup
 npm run restore -- ./backups/kid-chat-mvp-YYYYMMDD-HHMMSS
 npm run lint
 npm run typecheck
+```
+
+Browser smoke testing note:
+
+- this worktree now includes `playwright` as a dev dependency for local browser-based smoke checks
+- install browsers when needed with:
+
+```bash
+npx playwright install chromium
 ```
 
 ---

@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { formatBytesToMb, getAcceptedImageTypeLabel } from '@/lib/image-upload-policy';
 
-type TabKey = 'memory' | 'env' | 'text' | 'history' | 'tts';
+type TabKey = 'memory' | 'env' | 'text' | 'history' | 'tasks';
 
 type AdminChatSummary = {
   id: string;
@@ -101,6 +101,30 @@ type SmokeTestLog = {
   imageGeneration: Record<string, SmokeTestEntry | undefined>;
 };
 
+type AdminTaskRecord = {
+  id?: string;
+  type?: string;
+  status?: string;
+  topic?: string;
+  topicLabel?: string;
+  targetWordCount?: number;
+  rewardType?: string;
+  rewardTheme?: string;
+  instructions?: string;
+  createdBy?: string;
+  createdAt?: string;
+} & Record<string, unknown>;
+
+type AdminTaskStatus = {
+  kidId: string;
+  inbox: AdminTaskRecord[];
+  claimed: AdminTaskRecord[];
+  completed: AdminTaskRecord[];
+  archived: AdminTaskRecord[];
+  activeTask: AdminTaskRecord | null;
+  latestCompletedTask: AdminTaskRecord | null;
+};
+
 type TextSettings = Record<string, {
   name: string;
   emoji: string;
@@ -113,6 +137,13 @@ type TextSettings = Record<string, {
   imageGenerationEnabled: boolean;
   imageUnderstandingEnabled: boolean;
   imageEditEnabled: boolean;
+  rewardSettings: {
+    enabled: boolean;
+    defaultType: string;
+    certificateTitle: string;
+    imageThemes: string[];
+    encouragementStyle: string;
+  };
 }>;
 
 type ProfileFormState = {
@@ -128,6 +159,16 @@ type ProfileFormState = {
 };
 
 type HistoryRange = 'all' | '7d' | 'today';
+
+type NewTaskFormState = {
+  topic: string;
+  topicLabel: string;
+  targetWordCount: string;
+  rewardType: 'image' | 'certificate' | 'message';
+  rewardTheme: string;
+  createdBy: string;
+  instructions: string;
+};
 
 const COMMON_EMOJIS = ['🌸', '🚀', '🦄', '🐼', '🐱', '🐶', '⭐', '🎨', '📚', '🧠', '🦋', '🌈'];
 
@@ -161,6 +202,13 @@ function getCapabilitySummary(setting: { imageGenerationEnabled: boolean; imageU
   ];
 }
 
+function formatRewardTypeLabel(value: string) {
+  if (value === 'image') return '图片奖励';
+  if (value === 'certificate') return '奖状';
+  if (value === 'message') return '文字鼓励';
+  return value || '未设置';
+}
+
 function formatBytes(bytes: number) {
   if (bytes >= 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -173,6 +221,53 @@ function formatLocalDateTime(value?: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString('zh-CN');
+}
+
+function getTaskStatusLabel(status?: string) {
+  if (status === 'pending') return '待领取';
+  if (status === 'claimed') return '进行中';
+  if (status === 'completed') return '已完成';
+  if (status === 'archived') return '已归档';
+  return status || '未知状态';
+}
+
+function getTaskTypeLabel(type?: string) {
+  if (type === 'french-writing') return '法语写作';
+  return type || '未分类';
+}
+
+function getTaskTitle(task: AdminTaskRecord | null | undefined) {
+  if (!task) return '暂无任务';
+  return task.topicLabel || task.topic || task.id || '未命名任务';
+}
+
+function getTaskStateKey(task: AdminTaskRecord | null | undefined) {
+  if (!task?.status) return '';
+  if (task.status === 'pending') return 'pending';
+  if (task.status === 'claimed') return 'claimed';
+  if (task.status === 'completed') return 'completed';
+  if (task.status === 'archived') return 'archived';
+  return '';
+}
+
+function getTaskStateColumnLabel(state: string) {
+  if (state === 'pending') return '待领取';
+  if (state === 'claimed') return '进行中';
+  if (state === 'completed') return '已完成';
+  if (state === 'archived') return '已归档';
+  return '未知';
+}
+
+function defaultNewTaskForm(): NewTaskFormState {
+  return {
+    topic: 'rocket',
+    topicLabel: 'la fusée',
+    targetWordCount: '20',
+    rewardType: 'image',
+    rewardTheme: 'rocket',
+    createdBy: 'parent-admin',
+    instructions: 'Écris un petit texte en français sur le thème « la fusée », avec environ 20 mots.',
+  };
 }
 
 function isWithinHistoryRange(updatedAt: string, range: HistoryRange) {
@@ -261,13 +356,14 @@ function renderHighlightedText(text: string, query: string) {
   );
 }
 
-export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; textSettings: TextSettings; runtimeCheck: RuntimeCheck; mediaStorage: MediaStorageSummary; smokeTests: SmokeTestLog }) {
+export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; textSettings: TextSettings; runtimeCheck: RuntimeCheck; mediaStorage: MediaStorageSummary; smokeTests: SmokeTestLog; taskStatuses?: AdminTaskStatus[] }) {
   const [activeKid, setActiveKid] = useState(props.kids[0]?.id || '');
   const [activeTab, setActiveTab] = useState<TabKey>('memory');
   const [saving, setSaving] = useState(false);
   const [restarting, setRestarting] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [agentCheckingKidId, setAgentCheckingKidId] = useState('');
+  const [resetTestingKidId, setResetTestingKidId] = useState('');
   const [imageRuntimeChecking, setImageRuntimeChecking] = useState(false);
   const [imageSmokeTesting, setImageSmokeTesting] = useState(false);
   const [mediaSmokeTesting, setMediaSmokeTesting] = useState(false);
@@ -299,6 +395,16 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
   const [envValues, setEnvValues] = useState<EnvValues>(props.envValues);
   const [textSettings, setTextSettings] = useState<TextSettings>(props.textSettings);
   const [mediaStorage, setMediaStorage] = useState<MediaStorageSummary>(props.mediaStorage);
+  const [taskStatuses, setTaskStatuses] = useState<AdminTaskStatus[]>(props.taskStatuses || []);
+  const [taskStatusRefreshing, setTaskStatusRefreshing] = useState(false);
+  const [taskManagingKidId, setTaskManagingKidId] = useState('');
+  const [selectedTaskIdByKid, setSelectedTaskIdByKid] = useState<Record<string, string>>({});
+  const [taskJsonCopying, setTaskJsonCopying] = useState(false);
+  const [selectedTaskAction, setSelectedTaskAction] = useState('');
+  const [creatingTask, setCreatingTask] = useState(false);
+  const [newTaskFormByKid, setNewTaskFormByKid] = useState<Record<string, NewTaskFormState>>(() =>
+    Object.fromEntries(props.kids.map((kid) => [kid.id, defaultNewTaskForm()])),
+  );
 
   const activeKidData = useMemo(() => props.kids.find((kid) => kid.id === activeKid) ?? props.kids[0] ?? null, [props.kids, activeKid]);
 
@@ -339,6 +445,30 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
 
   const activeChatId = activeKidData ? selectedChatIdByKid[activeKidData.id] || filteredChats[0]?.id || activeKidData.chats[0]?.id || '' : '';
   const activeChatMessages = activeKidData ? activeKidData.messagesByChat[activeChatId] || [] : [];
+  const activeTaskStatus = activeKidData ? taskStatuses.find((item) => item.kidId === activeKidData.id) || null : null;
+  const activeTaskList = useMemo(() => activeTaskStatus
+    ? [...activeTaskStatus.claimed, ...activeTaskStatus.inbox, ...activeTaskStatus.completed, ...activeTaskStatus.archived]
+    : [] as AdminTaskRecord[], [activeTaskStatus]);
+  const selectedTaskId = activeKidData ? selectedTaskIdByKid[activeKidData.id] || '' : '';
+  const selectedTask = useMemo(() => {
+    if (!activeTaskList.length) return null;
+    return activeTaskList.find((task) => String(task.id || '') === selectedTaskId) || activeTaskList[0] || null;
+  }, [activeTaskList, selectedTaskId]);
+  const selectedTaskState = getTaskStateKey(selectedTask);
+  const activeNewTaskForm = activeKidData ? newTaskFormByKid[activeKidData.id] || defaultNewTaskForm() : defaultNewTaskForm();
+
+  useEffect(() => {
+    if (!activeKidData) return;
+    if (!activeTaskList.length) return;
+
+    const hasSelectedTask = activeTaskList.some((task) => String(task.id || '') === (selectedTaskIdByKid[activeKidData.id] || ''));
+    if (!hasSelectedTask) {
+      setSelectedTaskIdByKid((prev) => ({
+        ...prev,
+        [activeKidData.id]: String(activeTaskList[0]?.id || ''),
+      }));
+    }
+  }, [activeKidData, activeTaskList, selectedTaskIdByKid]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
@@ -420,6 +550,19 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
       [kidId]: {
         ...prev[kidId],
         [field]: value,
+      },
+    }));
+  }
+
+  function setKidRewardField(kidId: string, field: 'enabled' | 'defaultType' | 'certificateTitle' | 'imageThemes' | 'encouragementStyle', value: boolean | string | string[]) {
+    setTextSettings((prev) => ({
+      ...prev,
+      [kidId]: {
+        ...prev[kidId],
+        rewardSettings: {
+          ...prev[kidId].rewardSettings,
+          [field]: value,
+        },
       },
     }));
   }
@@ -514,6 +657,55 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
     }
   }
 
+  async function onManageKidTasks(kidId: string, action: 'archive-current' | 'clear-all') {
+    if (typeof window !== 'undefined') {
+      const confirmed = window.confirm(action === 'archive-current'
+        ? `确定要归档 ${kidId} 的当前任务吗？`
+        : `确定要清空 ${kidId} 的全部任务吗？这会把 inbox/claimed/completed 都移到 archived。`);
+      if (!confirmed) return;
+    }
+
+    setTaskManagingKidId(`${kidId}:${action}`);
+    setStatus('');
+
+    try {
+      const response = await fetch('/api/admin-task-manage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kidId, action }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || '任务管理操作失败');
+      }
+      setStatus(data.message || '任务管理操作已完成。');
+      await onRefreshTaskStatuses();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '任务管理操作失败');
+    } finally {
+      setTaskManagingKidId('');
+    }
+  }
+
+  async function onRefreshTaskStatuses() {
+    setTaskStatusRefreshing(true);
+    setStatus('');
+
+    try {
+      const response = await fetch('/api/admin-task-status');
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || '刷新任务状态失败');
+      }
+      setTaskStatuses(Array.isArray(data.kids) ? data.kids : []);
+      setStatus('任务状态已刷新。');
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '刷新任务状态失败');
+    } finally {
+      setTaskStatusRefreshing(false);
+    }
+  }
+
   async function onRefreshMediaStorage() {
     setMediaStorageRefreshing(true);
     setStatus('');
@@ -582,7 +774,7 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
         return;
       }
 
-      if (activeTab === 'text' || activeTab === 'tts') {
+      if (activeTab === 'text') {
         const response = await fetch('/api/kid-settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -594,7 +786,7 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
           throw new Error(data.error || '保存失败');
         }
 
-        setStatus(activeTab === 'tts' ? (data.message || 'TTS 设置已保存。') : (data.message || '孩子标题和欢迎语已保存。'));
+        setStatus(data.message || '孩子设置已保存。');
         return;
       }
 
@@ -667,6 +859,35 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
     }
   }
 
+  async function onResetKidTestData(kidId: string) {
+    if (typeof window !== 'undefined') {
+      const confirmed = window.confirm(`确定要清空 ${kidId} 的聊天/任务历史，并重建一个新的测试任务吗？`);
+      if (!confirmed) return;
+    }
+
+    setResetTestingKidId(kidId);
+    setStatus('');
+
+    try {
+      const response = await fetch('/api/admin-reset-kid-test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kidId }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || '重置测试数据失败');
+      }
+
+      setStatus(data.message || `已重置 ${kidId} 的测试数据。`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '重置测试数据失败');
+    } finally {
+      setResetTestingKidId('');
+    }
+  }
+
   async function onCheckAgent(kidId: string) {
     setAgentCheckingKidId(kidId);
     setStatus('');
@@ -688,6 +909,221 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
       setStatus(error instanceof Error ? error.message : 'agent 连通性测试失败');
     } finally {
       setAgentCheckingKidId('');
+    }
+  }
+
+  function setNewTaskField(field: keyof NewTaskFormState, value: string) {
+    if (!activeKidData) return;
+    setNewTaskFormByKid((prev) => ({
+      ...prev,
+      [activeKidData.id]: {
+        ...(prev[activeKidData.id] || defaultNewTaskForm()),
+        [field]: value,
+      },
+    }));
+  }
+
+  async function onCreateTask() {
+    if (!activeKidData) {
+      setStatus('未知孩子');
+      return;
+    }
+
+    setCreatingTask(true);
+    setStatus('');
+    try {
+      const response = await fetch('/api/admin-task-create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kidId: activeKidData.id,
+          topic: activeNewTaskForm.topic,
+          topicLabel: activeNewTaskForm.topicLabel,
+          targetWordCount: Number(activeNewTaskForm.targetWordCount || 20),
+          rewardType: activeNewTaskForm.rewardType,
+          rewardTheme: activeNewTaskForm.rewardTheme,
+          createdBy: activeNewTaskForm.createdBy,
+          instructions: activeNewTaskForm.instructions,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || '创建任务失败');
+      }
+      const createdTask = data.task as AdminTaskRecord | undefined;
+      setStatus(data.message || '新任务已创建。');
+      if (createdTask) {
+        setTaskStatuses((prev) => prev.map((item) => item.kidId === activeKidData.id
+          ? {
+              ...item,
+              inbox: [createdTask, ...item.inbox],
+              activeTask: item.claimed[0] || createdTask || item.inbox[0] || null,
+            }
+          : item));
+        setSelectedTaskIdByKid((prev) => ({
+          ...prev,
+          [activeKidData.id]: String(createdTask.id || ''),
+        }));
+      } else {
+        await onRefreshTaskStatuses();
+      }
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '创建任务失败');
+    } finally {
+      setCreatingTask(false);
+    }
+  }
+
+  async function onMoveSelectedTask(to: 'pending' | 'claimed' | 'completed' | 'archived') {
+    if (!activeKidData || !selectedTask?.id) {
+      setStatus('当前没有可操作的任务。');
+      return;
+    }
+
+    const from = getTaskStateKey(selectedTask) as 'pending' | 'claimed' | 'completed' | 'archived' | '';
+    if (!from) {
+      setStatus('无法识别当前任务状态。');
+      return;
+    }
+    if (from === to) {
+      setStatus('这条任务已经在目标状态里了。');
+      return;
+    }
+
+    setSelectedTaskAction(`move:${to}`);
+    setStatus('');
+    try {
+      const response = await fetch('/api/admin-task-manage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kidId: activeKidData.id,
+          action: 'move-task',
+          taskId: String(selectedTask.id),
+          from,
+          to,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || '移动任务失败');
+      }
+      setStatus(data.message || '任务状态已更新。');
+      setTaskStatuses((prev) => prev.map((item) => {
+        if (item.kidId !== activeKidData.id) return item;
+        const movedId = String(selectedTask.id);
+        const removeTask = (tasks: AdminTaskRecord[]) => tasks.filter((task) => String(task.id || '') !== movedId);
+        const movedTask: AdminTaskRecord = { ...selectedTask, status: to };
+        const next = {
+          ...item,
+          inbox: to === 'pending' ? [movedTask, ...removeTask(item.inbox)] : removeTask(item.inbox),
+          claimed: to === 'claimed' ? [movedTask, ...removeTask(item.claimed)] : removeTask(item.claimed),
+          completed: to === 'completed' ? [movedTask, ...removeTask(item.completed)] : removeTask(item.completed),
+          archived: to === 'archived' ? [movedTask, ...removeTask(item.archived)] : removeTask(item.archived),
+        };
+        return {
+          ...next,
+          activeTask: next.claimed[0] || next.inbox[0] || null,
+          latestCompletedTask: next.completed.length ? next.completed[next.completed.length - 1] : null,
+        };
+      }));
+      setSelectedTaskIdByKid((prev) => ({
+        ...prev,
+        [activeKidData.id]: String(selectedTask.id),
+      }));
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '移动任务失败');
+    } finally {
+      setSelectedTaskAction('');
+    }
+  }
+
+  async function onDeleteSelectedTask() {
+    if (!activeKidData || !selectedTask?.id) {
+      setStatus('当前没有可删除的任务。');
+      return;
+    }
+
+    const from = getTaskStateKey(selectedTask) as 'pending' | 'claimed' | 'completed' | 'archived' | '';
+    if (!from) {
+      setStatus('无法识别当前任务状态。');
+      return;
+    }
+
+    if (typeof window !== 'undefined') {
+      const confirmed = window.confirm(`确定要删除任务 ${getTaskTitle(selectedTask)} 吗？这会直接删除对应 JSON 文件。`);
+      if (!confirmed) return;
+    }
+
+    setSelectedTaskAction('delete');
+    setStatus('');
+    try {
+      const response = await fetch('/api/admin-task-manage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kidId: activeKidData.id,
+          action: 'delete-task',
+          taskId: String(selectedTask.id),
+          from,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || '删除任务失败');
+      }
+      setStatus(data.message || '任务已删除。');
+      setTaskStatuses((prev) => prev.map((item) => {
+        if (item.kidId !== activeKidData.id) return item;
+        const deletedId = String(selectedTask.id);
+        const next = {
+          ...item,
+          inbox: item.inbox.filter((task) => String(task.id || '') !== deletedId),
+          claimed: item.claimed.filter((task) => String(task.id || '') !== deletedId),
+          completed: item.completed.filter((task) => String(task.id || '') !== deletedId),
+          archived: item.archived.filter((task) => String(task.id || '') !== deletedId),
+        };
+        return {
+          ...next,
+          activeTask: next.claimed[0] || next.inbox[0] || null,
+          latestCompletedTask: next.completed.length ? next.completed[next.completed.length - 1] : null,
+        };
+      }));
+      const remainingTaskIds = activeTaskList
+        .map((task) => String(task.id || ''))
+        .filter((taskId) => taskId && taskId !== String(selectedTask.id));
+      setSelectedTaskIdByKid((prev) => ({
+        ...prev,
+        [activeKidData.id]: remainingTaskIds[0] || '',
+      }));
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '删除任务失败');
+    } finally {
+      setSelectedTaskAction('');
+    }
+  }
+
+  async function onCopySelectedTaskJson() {
+    if (!selectedTask) {
+      setStatus('当前没有可复制的任务。');
+      return;
+    }
+
+    const content = JSON.stringify(selectedTask, null, 2);
+
+    try {
+      setTaskJsonCopying(true);
+      if (typeof window !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(content);
+        setStatus('任务 JSON 已复制到剪贴板。');
+        return;
+      }
+
+      setStatus('当前浏览器不支持直接复制，请手动复制右侧原始字段。');
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '复制任务 JSON 失败');
+    } finally {
+      setTaskJsonCopying(false);
     }
   }
 
@@ -937,14 +1373,24 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
                 <div>agentId: {kidCheck.agentId || '未配置'}</div>
                 <div>workspace: {kidCheck.workspaceExists ? '✅' : '⚠️'} {kidCheck.workspaceDir || '未解析'}</div>
                 <div>memory: {kidCheck.memoryExists ? '✅' : '⚠️'} {kidCheck.memoryPath || '未解析'}</div>
-                <button
-                  type="button"
-                  className="runtime-check-button"
-                  onClick={() => onCheckAgent(kidCheck.kidId)}
-                  disabled={agentCheckingKidId === kidCheck.kidId || restarting || saving}
-                >
-                  {agentCheckingKidId === kidCheck.kidId ? '测试中…' : '测试 agent 连通性'}
-                </button>
+                <div className="runtime-check-button-row">
+                  <button
+                    type="button"
+                    className="runtime-check-button"
+                    onClick={() => onCheckAgent(kidCheck.kidId)}
+                    disabled={agentCheckingKidId === kidCheck.kidId || restarting || saving || resetTestingKidId === kidCheck.kidId}
+                  >
+                    {agentCheckingKidId === kidCheck.kidId ? '测试中…' : '测试 agent 连通性'}
+                  </button>
+                  <button
+                    type="button"
+                    className="runtime-check-button"
+                    onClick={() => onResetKidTestData(kidCheck.kidId)}
+                    disabled={resetTestingKidId === kidCheck.kidId || restarting || saving || agentCheckingKidId === kidCheck.kidId}
+                  >
+                    {resetTestingKidId === kidCheck.kidId ? '重置中…' : `重置${kidCheck.kidName}测试数据`}
+                  </button>
+                </div>
                 {kidCheck.issues.length ? (
                   <ul>
                     {kidCheck.issues.map((issue) => (
@@ -979,11 +1425,11 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
             <button className={activeTab === 'text' ? 'admin-tab active' : 'admin-tab'} onClick={() => setActiveTab('text')}>
               标题与欢迎语
             </button>
-            <button className={activeTab === 'tts' ? 'admin-tab active' : 'admin-tab'} onClick={() => setActiveTab('tts')}>
-              TTS 语音
-            </button>
             <button className={activeTab === 'history' ? 'admin-tab active' : 'admin-tab'} onClick={() => setActiveTab('history')}>
               聊天记录
+            </button>
+            <button className={activeTab === 'tasks' ? 'admin-tab active' : 'admin-tab'} onClick={() => setActiveTab('tasks')}>
+              任务浏览
             </button>
             <button className={activeTab === 'env' ? 'admin-tab active' : 'admin-tab'} onClick={() => setActiveTab('env')}>
               PIN 设置
@@ -998,20 +1444,25 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
                 ? '环境变量 · .env.local'
                 : activeTab === 'text'
                   ? `${activeKidData?.name || '未知孩子'} · 标题与欢迎语`
-                  : activeTab === 'tts'
-                    ? `${activeKidData?.name || '未知孩子'} · TTS 语音设置`
-                    : activeTab === 'history'
-                      ? `${activeKidData?.name || '未知孩子'} · 聊天记录`
-                      : `${activeKidData?.name || '未知孩子'} · MEMORY.md`}
+                  : activeTab === 'history'
+                  ? `${activeKidData?.name || '未知孩子'} · 聊天记录`
+                  : activeTab === 'tasks'
+                    ? `${activeKidData?.name || '未知孩子'} · 任务浏览`
+                    : `${activeKidData?.name || '未知孩子'} · MEMORY.md`}
             </strong>
             <div className="memory-admin-actions">
+              {activeTab === 'tasks' ? (
+                <button className="admin-secondary-button" onClick={onRefreshTaskStatuses} disabled={taskStatusRefreshing || restarting || saving}>
+                  {taskStatusRefreshing ? '刷新中…' : '刷新任务状态'}
+                </button>
+              ) : null}
               {activeTab === 'env' ? (
                 <button className="admin-secondary-button" onClick={onRestartService} disabled={restarting || saving}>
                   {restarting ? '重启中…' : '重启服务'}
                 </button>
               ) : null}
-              {activeTab !== 'history' ? (
-                <button onClick={onSave} disabled={saving || restarting || ((activeTab === 'memory' || activeTab === 'text' || activeTab === 'tts') && !activeKidData)}>
+              {activeTab !== 'history' && activeTab !== 'tasks' ? (
+                <button onClick={onSave} disabled={saving || restarting || ((activeTab === 'memory' || activeTab === 'text') && !activeKidData)}>
                   {saving ? '保存中…' : '保存'}
                 </button>
               ) : null}
@@ -1228,9 +1679,8 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
                   <span>允许参考图改图（预留）</span>
                 </label>
               </div>
-            </div>
-          ) : activeTab === 'tts' ? (
-            <div className="env-admin-form">
+
+              
               <p className="env-admin-note">管理孩子端手动朗读回复时使用的 TTS 设置。当前版本仅影响手动点击朗读按钮，不会自动朗读最新消息。</p>
               <p className="env-admin-note">Voice 列表会尽量标出推荐项、语言匹配项、本机 voice 和系统默认 voice，帮助家长更快找到合适的声音。</p>
 
@@ -1367,6 +1817,272 @@ export function AdminPanel(props: { kids: AdminKid[]; envValues: EnvValues; text
                   <div className="empty-state">请选择一个会话查看内容。</div>
                 )}
               </section>
+            </div>
+          ) : activeTab === 'tasks' ? (
+            <div className="admin-task-browser">
+              <div className="admin-task-overview-grid">
+                <article className="admin-task-summary-card">
+                  <span className="admin-task-summary-label">当前活跃任务</span>
+                  <strong>{getTaskTitle(activeTaskStatus?.activeTask)}</strong>
+                  <div className="admin-task-summary-meta">
+                    <span>{getTaskStatusLabel(activeTaskStatus?.activeTask?.status)}</span>
+                    <span>{getTaskTypeLabel(activeTaskStatus?.activeTask?.type)}</span>
+                  </div>
+                  {activeTaskStatus?.activeTask?.instructions ? (
+                    <p>{String(activeTaskStatus.activeTask.instructions)}</p>
+                  ) : (
+                    <p>当前没有等待领取或进行中的任务。</p>
+                  )}
+                </article>
+
+                <article className="admin-task-summary-card">
+                  <span className="admin-task-summary-label">最近完成</span>
+                  <strong>{getTaskTitle(activeTaskStatus?.latestCompletedTask)}</strong>
+                  <div className="admin-task-summary-meta">
+                    <span>{activeTaskStatus?.latestCompletedTask?.createdAt ? formatLocalDateTime(String(activeTaskStatus.latestCompletedTask.createdAt)) : '暂无记录'}</span>
+                    <span>{activeTaskStatus?.latestCompletedTask?.targetWordCount ? `${String(activeTaskStatus.latestCompletedTask.targetWordCount)} 词` : '未设字数'}</span>
+                  </div>
+                  <p>{activeTaskStatus?.latestCompletedTask?.instructions ? String(activeTaskStatus.latestCompletedTask.instructions) : '完成后的任务会显示在这里，方便家长快速回看。'}</p>
+                </article>
+
+                <article className="admin-task-summary-card admin-task-summary-card-actions">
+                  <span className="admin-task-summary-label">新建任务</span>
+                  <div className="admin-task-create-form">
+                    <input
+                      type="text"
+                      value={activeNewTaskForm.topic}
+                      onChange={(event) => setNewTaskField('topic', event.target.value)}
+                      placeholder="topic，例如 rocket"
+                    />
+                    <input
+                      type="text"
+                      value={activeNewTaskForm.topicLabel}
+                      onChange={(event) => setNewTaskField('topicLabel', event.target.value)}
+                      placeholder="展示标题，例如 la fusée"
+                    />
+                    <input
+                      type="number"
+                      min="1"
+                      value={activeNewTaskForm.targetWordCount}
+                      onChange={(event) => setNewTaskField('targetWordCount', event.target.value)}
+                      placeholder="目标字数"
+                    />
+                    <select
+                      value={activeNewTaskForm.rewardType}
+                      onChange={(event) => setNewTaskField('rewardType', event.target.value)}
+                    >
+                      <option value="image">图片奖励</option>
+                      <option value="certificate">奖状</option>
+                      <option value="message">文字鼓励</option>
+                    </select>
+                    <input
+                      type="text"
+                      value={activeNewTaskForm.rewardTheme}
+                      onChange={(event) => setNewTaskField('rewardTheme', event.target.value)}
+                      placeholder="reward theme"
+                    />
+                    <input
+                      type="text"
+                      value={activeNewTaskForm.createdBy}
+                      onChange={(event) => setNewTaskField('createdBy', event.target.value)}
+                      placeholder="created by"
+                    />
+                    <textarea
+                      className="admin-textarea admin-task-create-textarea"
+                      value={activeNewTaskForm.instructions}
+                      onChange={(event) => setNewTaskField('instructions', event.target.value)}
+                      placeholder="任务说明"
+                    />
+                    <div className="admin-task-action-stack">
+                      <button
+                        type="button"
+                        className="admin-secondary-button admin-task-action-success"
+                        onClick={onCreateTask}
+                        disabled={!activeKidData || creatingTask || taskStatusRefreshing || restarting || saving}
+                      >
+                        {creatingTask ? '创建中…' : '创建新任务'}
+                      </button>
+                      <button
+                        type="button"
+                        className="admin-secondary-button"
+                        onClick={() => activeKidData && onManageKidTasks(activeKidData.id, 'clear-all')}
+                        disabled={!activeKidData || taskManagingKidId !== '' || taskStatusRefreshing || restarting || saving || creatingTask}
+                      >
+                        {taskManagingKidId === `${activeKidData?.id}:clear-all` ? '清理中…' : '清空全部任务'}
+                      </button>
+                    </div>
+                  </div>
+                  <p>这里创建的是进入孩子 workspace `tasks/inbox/` 的待领取任务，方便家长直接在管理页投递新任务。</p>
+                </article>
+              </div>
+
+              <div className="admin-task-workspace">
+                <div className="admin-task-columns">
+                  {([
+                    ['inbox', '待领取', activeTaskStatus?.inbox || []],
+                    ['claimed', '进行中', activeTaskStatus?.claimed || []],
+                    ['completed', '已完成', activeTaskStatus?.completed || []],
+                    ['archived', '已归档', activeTaskStatus?.archived || []],
+                  ] as const).map(([key, label, tasks]) => (
+                    <section key={key} className="admin-task-column">
+                      <div className="admin-task-column-header">
+                        <strong>{label}</strong>
+                        <span>{tasks.length} 条</span>
+                      </div>
+                      <div className="admin-task-list">
+                        {tasks.length ? tasks.map((task) => {
+                          const taskId = String(task.id || `${key}-${String(task.createdAt || '')}`);
+                          const isActive = String(selectedTask?.id || '') === String(task.id || '');
+                          return (
+                            <button
+                              key={taskId}
+                              type="button"
+                              className={isActive ? 'admin-task-card admin-task-card-selectable active' : 'admin-task-card admin-task-card-selectable'}
+                              onClick={() => activeKidData && setSelectedTaskIdByKid((prev) => ({
+                                ...prev,
+                                [activeKidData.id]: String(task.id || ''),
+                              }))}
+                            >
+                              <div className="admin-task-card-top">
+                                <strong>{getTaskTitle(task)}</strong>
+                                <span className={`admin-task-badge admin-task-badge-${task.status || 'unknown'}`}>{getTaskStatusLabel(task.status)}</span>
+                              </div>
+                              <div className="admin-task-card-meta">
+                                <span>{getTaskTypeLabel(task.type)}</span>
+                                <span>{task.targetWordCount ? `${String(task.targetWordCount)} 词` : '未设字数'}</span>
+                                <span>{task.rewardType ? `奖励: ${String(task.rewardType)}` : '未设奖励'}</span>
+                              </div>
+                              <div className="admin-task-card-footer">
+                                <span>{task.createdAt ? formatLocalDateTime(String(task.createdAt)) : '时间未知'}</span>
+                                <span>{task.createdBy ? `来自 ${String(task.createdBy)}` : '来源未标记'}</span>
+                              </div>
+                            </button>
+                          );
+                        }) : (
+                          <div className="empty-state">{label}里还没有任务。</div>
+                        )}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+
+                <aside className="admin-task-detail-panel">
+                  <div className="admin-task-detail-header">
+                    <div>
+                      <span className="admin-task-summary-label">任务详情</span>
+                      <h3>{getTaskTitle(selectedTask)}</h3>
+                    </div>
+                    {selectedTask ? <span className={`admin-task-badge admin-task-badge-${selectedTask.status || 'unknown'}`}>{getTaskStatusLabel(selectedTask.status)}</span> : null}
+                  </div>
+
+                  {selectedTask ? (
+                    <div className="admin-task-detail-body">
+                      <div className="admin-task-detail-state-hint">
+                        当前所在列：<strong>{getTaskStateColumnLabel(selectedTaskState)}</strong>
+                        <span>可迁移目标：{['pending', 'claimed', 'completed', 'archived'].filter((state) => state !== selectedTaskState).map(getTaskStateColumnLabel).join(' · ')}</span>
+                      </div>
+
+                      <div className="admin-task-detail-actions">
+                        <button
+                          type="button"
+                          className="admin-secondary-button admin-task-action-neutral"
+                          onClick={() => onMoveSelectedTask('pending')}
+                          disabled={!selectedTask?.id || selectedTaskAction !== '' || getTaskStateKey(selectedTask) === 'pending'}
+                        >
+                          {selectedTaskAction === 'move:pending' ? '处理中…' : '转为待领取'}
+                        </button>
+                        <button
+                          type="button"
+                          className="admin-secondary-button admin-task-action-warn"
+                          onClick={() => onMoveSelectedTask('claimed')}
+                          disabled={!selectedTask?.id || selectedTaskAction !== '' || getTaskStateKey(selectedTask) === 'claimed'}
+                        >
+                          {selectedTaskAction === 'move:claimed' ? '处理中…' : '标记为进行中'}
+                        </button>
+                        <button
+                          type="button"
+                          className="admin-secondary-button admin-task-action-success"
+                          onClick={() => onMoveSelectedTask('completed')}
+                          disabled={!selectedTask?.id || selectedTaskAction !== '' || getTaskStateKey(selectedTask) === 'completed'}
+                        >
+                          {selectedTaskAction === 'move:completed' ? '处理中…' : '标记为已完成'}
+                        </button>
+                        <button
+                          type="button"
+                          className="admin-secondary-button admin-task-action-muted"
+                          onClick={() => onMoveSelectedTask('archived')}
+                          disabled={!selectedTask?.id || selectedTaskAction !== '' || getTaskStateKey(selectedTask) === 'archived'}
+                        >
+                          {selectedTaskAction === 'move:archived' ? '处理中…' : '归档这条任务'}
+                        </button>
+                        <button
+                          type="button"
+                          className="admin-secondary-button admin-task-action-neutral"
+                          onClick={onCopySelectedTaskJson}
+                          disabled={!selectedTask || taskJsonCopying || selectedTaskAction !== ''}
+                        >
+                          {taskJsonCopying ? '复制中…' : '复制任务 JSON'}
+                        </button>
+                        <button
+                          type="button"
+                          className="admin-secondary-button admin-task-action-danger"
+                          onClick={onDeleteSelectedTask}
+                          disabled={!selectedTask?.id || selectedTaskAction !== ''}
+                        >
+                          {selectedTaskAction === 'delete' ? '删除中…' : '删除这条任务'}
+                        </button>
+                      </div>
+
+                      <div className="admin-task-detail-grid">
+                        <div className="admin-task-detail-item">
+                          <span>任务 ID</span>
+                          <strong>{selectedTask.id || '未写入'}</strong>
+                        </div>
+                        <div className="admin-task-detail-item">
+                          <span>任务类型</span>
+                          <strong>{getTaskTypeLabel(selectedTask.type)}</strong>
+                        </div>
+                        <div className="admin-task-detail-item">
+                          <span>目标字数</span>
+                          <strong>{selectedTask.targetWordCount ? `${String(selectedTask.targetWordCount)} 词` : '未设置'}</strong>
+                        </div>
+                        <div className="admin-task-detail-item">
+                          <span>奖励</span>
+                          <strong>{selectedTask.rewardType ? String(selectedTask.rewardType) : '未设置'}</strong>
+                        </div>
+                        <div className="admin-task-detail-item">
+                          <span>奖励主题</span>
+                          <strong>{selectedTask.rewardTheme ? String(selectedTask.rewardTheme) : '未设置'}</strong>
+                        </div>
+                        <div className="admin-task-detail-item">
+                          <span>创建来源</span>
+                          <strong>{selectedTask.createdBy ? String(selectedTask.createdBy) : '未标记'}</strong>
+                        </div>
+                        <div className="admin-task-detail-item">
+                          <span>创建时间</span>
+                          <strong>{selectedTask.createdAt ? formatLocalDateTime(String(selectedTask.createdAt)) : '未知'}</strong>
+                        </div>
+                        <div className="admin-task-detail-item">
+                          <span>Topic</span>
+                          <strong>{selectedTask.topic ? String(selectedTask.topic) : '未设置'}</strong>
+                        </div>
+                      </div>
+
+                      <div className="admin-task-detail-section">
+                        <span className="admin-task-detail-section-label">任务说明</span>
+                        <div className="admin-task-detail-content">{selectedTask.instructions ? String(selectedTask.instructions) : '这个任务没有额外说明。'}</div>
+                      </div>
+
+                      <div className="admin-task-detail-section">
+                        <span className="admin-task-detail-section-label">原始字段</span>
+                        <pre className="admin-task-json">{JSON.stringify(selectedTask, null, 2)}</pre>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="empty-state">请选择一条任务，在右侧查看完整详情。</div>
+                  )}
+                </aside>
+              </div>
             </div>
           ) : (
             <textarea className="memory-editor" value={currentValue} onChange={(event) => setCurrentValue(event.target.value)} />
