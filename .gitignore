@@ -15,3 +15,8 @@ data/image-upload-throttle/*.json
 
 data/chat-store/*
 !data/chat-store/.gitkeep
+
+data/french-writing-tasks/*
+!data/french-writing-tasks/.gitkeep
+data/last-active-chat.json
+.brv/
