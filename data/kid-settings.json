@@ -6,11 +6,24 @@
     "title": "故事和语言小助手",
     "welcome": "你好，Grace！我可以陪你聊天、讲故事，也可以用中文或法语和你交流。",
     "ttsEnabled": true,
-    "ttsPreferredVoiceName": "",
+    "ttsPreferredVoiceName": "Microsoft Denise Online (Natural) - French (France) (fr-FR)",
     "ttsRate": 0.9,
     "imageGenerationEnabled": true,
     "imageUnderstandingEnabled": true,
-    "imageEditEnabled": true
+    "imageEditEnabled": true,
+    "rewardSettings": {
+      "enabled": true,
+      "defaultType": "image",
+      "certificateTitle": "今日法语小星星",
+      "imageThemes": [
+        "pink",
+        "magic",
+        "friendship",
+        "animals",
+        "celebration"
+      ],
+      "encouragementStyle": "gentle"
+    }
   },
   "george": {
     "name": "George",
@@ -19,10 +32,23 @@
     "title": "科学和问答小助手",
     "welcome": "你好，George！我们可以一起聊科学、提问题，也可以用中文或法语交流。",
     "ttsEnabled": true,
-    "ttsPreferredVoiceName": "",
+    "ttsPreferredVoiceName": "Microsoft Antoine Online (Natural) - French (Canada) (fr-CA)",
     "ttsRate": 0.9,
     "imageGenerationEnabled": true,
     "imageUnderstandingEnabled": true,
-    "imageEditEnabled": false
+    "imageEditEnabled": false,
+    "rewardSettings": {
+      "enabled": true,
+      "defaultType": "image",
+      "certificateTitle": "今日小小科学家",
+      "imageThemes": [
+        "stars",
+        "science",
+        "space",
+        "rockets",
+        "celebration"
+      ],
+      "encouragementStyle": "challenge"
+    }
   }
 }
